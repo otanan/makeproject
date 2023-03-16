@@ -11,6 +11,7 @@ import sys # exit
 import os # walk
 import shutil # deleting existing project folders
 from yamldirs.filemaker import Filemaker # .yaml to folder structure
+from datetime import datetime
 #--- Custom imports ---#
 from itermlink.tools.console import *
 from itermlink.tools.typing_filter import launch as launch_filter
@@ -19,6 +20,7 @@ import itermlink
 __version__ = 0.11
 FILE_KEY = '$' # key for file replacements
 STRUCT_EXT = '.yaml'
+STRUCT_COMMENT = '#'
 STRUCTS_FOLDER = Path(__file__).parent / 'project_structs'
 TEMPLATE_FOLDER = Path(__file__).parent / 'templates'
 #======================== Readers ========================#
@@ -47,8 +49,21 @@ def get_struct_options():
             file = Path(file)
             if STRUCT_EXT == file.suffix:
                 # Prettify the structure path to suggest it as an option
-                path = (Path(root) / file.stem).relative_to(STRUCTS_FOLDER)
-                structs.append(str(path))
+                path = Path(root) / file.name
+                # i.e. Teaching/Quizzes, instead of
+                # project_structs/teaching/Quizzes.yaml
+                name = str(
+                    (Path(root) / file.stem).relative_to(STRUCTS_FOLDER)
+                )
+
+                description = None
+                with open(path, 'r') as f:
+                    first_line = f.readline().strip()
+                    # First line is a comment, this will serve as a description
+                    if first_line.startswith(STRUCT_COMMENT):
+                        description = first_line[len(STRUCT_COMMENT):].strip()
+
+                structs.append( (name, description) )
     return structs
 
 
@@ -104,7 +119,20 @@ def parse_keys(raw_string, data):
 
 def get_project_type():
     """ Query the user for the project type. """
-    return launch_filter(options=get_struct_options())
+    structs = get_struct_options()
+    desc_delim = ' - '
+    # Options contain names and descriptions
+    options = [
+        name + desc_delim + desc if desc is not None else name
+        for name, desc in structs
+    ]
+    result = launch_filter(options=options)
+
+    # Parse the description out of the result
+    if desc_delim in result:
+        # Pull the name
+        result = result.split(desc_delim)[0]
+    return result
 
 
 def get_project_name():
@@ -172,25 +200,18 @@ def generate_project(data):
     print(f'Project [emph]{data["name"]}[/] generated: [success]{project_folder}[/].')
 
     return project_folder
-    
 
-
-def test():
-    pdata = {
-        'type': 'Exercises',
-        'name': 'Real Analysis',
-        'dst': Path.cwd(),
-    }
-    pdata['formatted_name'] = format_name(pdata['name'])
-    exercises(pdata)
-    exit()
 
 #======================== Entry ========================#
 
 def main():
     console.rule(f'Project Generator v{__version__:.2f}')
     # Get all data relevant to the project
-    project_data = { 'type': get_project_type() }
+    project_data = {
+        'type': get_project_type(),
+        # March 15, 2023, 11:44 PM
+        'datetime': datetime.now().strftime("%B %d, %Y, %I:%M %p"),
+    }
     if project_data['type'] is None:
         sys.exit()
 
@@ -206,9 +227,9 @@ def main():
     print('Changing directories...')
     # Open folder in finder, open in sublime text, open in iTerm
     itermlink.run_command_on_active_sess(
-        f'cd {project_folder};'
-        f'open {project_folder};'
-        f'subl {project_folder};'
+        f'cd "{project_folder}";'
+        f'open "{project_folder}";'
+        f'subl "{project_folder}";'
     )
 
     

@@ -1,7 +1,8 @@
-# Project template for solved problems such as textbook or informal problems that might not immediately belong to a notebook
-exercises:
+# Notebook for solved problems such as textbook or informal problems that might not immediately belong to a notebook.
+exercises-{mp:formatted_name}:
     - exercises-{mp:formatted_name}.tex
     - preamble.sty
+    - references.bib
     - intro:
         - $gitrepos.tex
         - $introduction.tex
