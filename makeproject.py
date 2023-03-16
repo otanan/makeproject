@@ -206,7 +206,7 @@ def main():
     print('Changing directories...')
     # Open folder in finder, open in sublime text, open in iTerm
     itermlink.run_command_on_active_sess(
-        f'cd {project_folder}'
+        f'cd {project_folder};'
         f'open {project_folder};'
         f'subl {project_folder};'
     )
