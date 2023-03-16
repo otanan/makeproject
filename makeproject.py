@@ -24,28 +24,39 @@ def template_folder():
     return Path(__file__).parent / 'templates'
 
 
-def get_template_contents(contents_name):
+def get_template_contents(contents_name, project_data):
     """ Gets the contents of a template file. """
     with open(template_folder() / contents_name, 'r') as f:
-        return f.read()
+        contents = f.read()
+
+    # Parse contents
+    return parse_keys(contents, project_data)
 
 
-def get_struct_string(project_type, name):
+def get_struct_string(project_data):
     """ Gets the YAML struct string to generate the project. """
     structs_folder = Path(__file__).parent / 'project_structs'
-    with open(structs_folder / (project_type + '.yaml'), 'r') as f:
+    yaml_fname = project_data['type'].lower() + '.yaml'
+
+    with open(structs_folder / yaml_fname, 'r') as f:
         struct_string = f.read()
 
     # Direct replacements
-    return struct_string.replace("{name}", format_name(name))
+    return parse_keys(struct_string, project_data)
 
 #======================== Writers ========================#
 
-def update_from_template(path):
+def update_from_template(path, project_data):
     """ Update the file using the corresponding template. """
     template_name = str(path.name)[len(FILE_KEY):]
-    with open(path, 'w') as f:
-        f.write(get_template_contents(template_name))
+    with open(path, "r+") as f:
+        # Contents of file with key will be its new name if provided
+        new_filename = f.read()
+        f.seek(0)
+        f.write(get_template_contents(template_name, project_data))
+        f.truncate()
+
+    return new_filename if new_filename != '' else template_name
 
 
 #======================== Helper ========================#
@@ -55,13 +66,22 @@ def format_name(name):
     return name.lower().replace(' ', '_')
 
 
-def remove_key_in_fname(path):
-    """ Rename the file to remove the FILE_KEY in its name. """
-    name = path.parent / str(path.name)[len(FILE_KEY):]
-    path.rename(name)
+def rename_file(path, new_fname):
+    """ Renames a file.
+        
+        Args:
+            path (pathlib.PosixPath): the path to the file to be renamed.
+
+            new_fname (str): the new name for the file, not its path.
+    
+        Returns:
+            (None): none
+    
+    """
+    path.rename(path.parent / new_fname)
 
 
-def parse_struct_tree(dst):
+def parse_struct_tree(dst, project_data):
     """ Runs through the constructed structure tree and replaces the file contents appropriately. """
     # Walk through project's directories
     for root, dirs, files in os.walk(dst):
@@ -71,8 +91,14 @@ def parse_struct_tree(dst):
                 # Key found in path, get the relative path
                 file = (Path(root) / file).relative_to(dst)
                 print(f'Detected key: [success]{file.name}[/]... updating contents...')
-                update_from_template(file)
-                remove_key_in_fname(file)
+
+                new_fname = update_from_template(file, project_data)
+                rename_file(file, new_fname)
+
+
+def parse_keys(raw_string, project_data):
+    """ Parse string for keys such as "{name}". """
+    return raw_string.replace("{name}", project_data['formatted_name'])
 
 
 #======================== Messages ========================#
@@ -80,12 +106,14 @@ def parse_struct_tree(dst):
 
 def welcome():
     """ Provides a welcome screen. """
-    print(f'Project Generator - v:{__version__}')
+    console.rule(f'Project Generator v{__version__:.2f}')
 
 
-def declare_project_generation(project_type, dst):
+def declare_project_generation(project_data):
     """ Prints a header for which type of project is being generated and the location. """
-    print(f'Making [emph]{project_type}[/] Project at: [success]{dst}[/].')
+    console.rule(
+        f'Making [emph]{project_data["type"]}[/] Project at: [success]{project_data["dst"]}[/].'
+    )
 
 
 #======================== Queries ========================#
@@ -113,30 +141,37 @@ def get_destination():
 
 #======================== Project Generation ========================#
 
-def generate_project(name, dst, generator):
+def generate_project(project_data):
     """ Main loop function for generating the project. """
-    declare_project_generation(name, dst)
+    declare_project_generation(project_data)
     # Run the generator at this destination
-    generator(name, dst)
+    project_data['generator'](project_data)
+    print(f'Project [emph]{project_data["name"]}[/] generated: [success]{dst}[/].')
 
 
-def exercises(name, dst):
-    struct_string = get_struct_string('exercises', name)
+def exercises(project_data):
+    struct_string = get_struct_string(project_data)
     try:
-        Filemaker(dst, struct_string)
+        Filemaker(project_data['dst'], struct_string)
     except FileExistsError as e:
         if confirm(
             'Project exists... [red]delete[/] and continue?', default=False
         ):
-            shutil.rmtree(dst / 'exercises')
+            shutil.rmtree(project_data['dst'] / 'exercises')
             # Run again
-            exercises(name, dst)
+            exercises(project_data)
 
-    parse_struct_tree(dst)
+    parse_struct_tree(project_data['dst'], project_data)
 
 
 def test():
-    exercises('Real Analysis', Path.cwd())
+    pdata = {
+        'type': 'Exercises',
+        'name': 'Real Analysis',
+        'dst': Path.cwd(),
+    }
+    pdata['formatted_name'] = format_name(pdata['name'])
+    exercises(pdata)
     exit()
 
 #======================== Entry ========================#
@@ -162,13 +197,16 @@ def main():
 
     welcome()
 
-    project_type = get_project_type(projects)
-    name = get_project_name()
-    # Potential output directory
-    dst = get_destination()
+    project_data = {
+        'type': get_project_type(projects),
+        'name': get_project_name(),
+        'formatted_name': format_name(name),
+        'dst': get_destination(),
+    }
+    project_data['generator'] = projects['type']
+
     # Run the generation functions
-    generate_project(name, dst, projects[project_type])
-    print(f'Project [emph]{name}[/] generated: [success]{dst}[/].')
+    generate_project(project_data)
 
     
 

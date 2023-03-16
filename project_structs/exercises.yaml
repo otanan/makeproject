@@ -1,9 +1,10 @@
 exercises:
     - exercises-{name}.tex
     - preamble.sty
-    - documents: 
+    - documents:
         - $gitrepos.tex
         - $intro.tex
         - $nomenclature.tex
     - problem_section:
         - problem_section.tex
+    - $exercises-README.md: README.md
