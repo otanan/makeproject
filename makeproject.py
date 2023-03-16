@@ -7,59 +7,50 @@
 # import __init__
 #------------- Imports -------------#
 from pathlib import Path
-import shutil
-import sys
-import os
-from yamldirs.filemaker import Filemaker
+import sys # exit
+import os # walk
+import shutil # deleting existing project folders
+from yamldirs.filemaker import Filemaker # .yaml to folder structure
 #--- Custom imports ---#
 from itermlink.tools.console import *
 from itermlink.tools.typing_filter import launch as launch_filter
 import itermlink
 #======================== Fields ========================#
-__version__ = 0.10
+__version__ = 0.11
 FILE_KEY = '$' # key for file replacements
+STRUCT_EXT = '.yaml'
+STRUCTS_FOLDER = Path(__file__).parent / 'project_structs'
+TEMPLATE_FOLDER = Path(__file__).parent / 'templates'
 #======================== Readers ========================#
 
-def template_folder():
-    return Path(__file__).parent / 'templates'
-
-
-def get_template_contents(contents_name, project_data):
+def get_template_contents(contents_name):
     """ Gets the contents of a template file. """
-    with open(template_folder() / contents_name, 'r') as f:
-        contents = f.read()
-
-    # Parse contents
-    return parse_keys(contents, project_data)
+    with open(TEMPLATE_FOLDER / contents_name, 'r') as f:
+        return f.read()
 
 
-def get_struct_string(project_data):
+def get_struct_string(project_type):
     """ Gets the YAML struct string to generate the project. """
-    structs_folder = Path(__file__).parent / 'project_structs'
-    yaml_fname = project_data['type'].lower() + '.yaml'
+    yaml_fname = project_type.lower() + '.yaml'
 
-    with open(structs_folder / yaml_fname, 'r') as f:
-        struct_string = f.read()
-
-    # Direct replacements
-    return parse_keys(struct_string, project_data)
-
-#======================== Writers ========================#
-
-def update_from_template(path, project_data):
-    """ Update the file using the corresponding template. """
-    template_name = str(path.name)[len(FILE_KEY):]
-    with open(path, "r+") as f:
-        # Contents of file with key will be its new name if provided
-        new_filename = f.read()
-        f.seek(0)
-        f.write(get_template_contents(template_name, project_data))
-        f.truncate()
-
-    return new_filename if new_filename != '' else template_name
+    with open(STRUCTS_FOLDER / yaml_fname, 'r') as f:
+        return f.read()
 
 
 #======================== Helper ========================#
+
+def get_struct_options():
+    """ Gets all existing project structure options. """
+    structs = []
+    for root, dirs, files in os.walk(STRUCTS_FOLDER):
+        for file in files:
+            file = Path(file)
+            if STRUCT_EXT == file.suffix:
+                # Prettify the structure path to suggest it as an option
+                path = (Path(root) / file.stem).relative_to(STRUCTS_FOLDER)
+                structs.append(str(path))
+    return structs
+
 
 def format_name(name):
     """ Format a general name to a standard filename convention. Converts something like "Real Analysis" to "real_analysis". """
@@ -81,46 +72,39 @@ def rename_file(path, new_fname):
     path.rename(path.parent / new_fname)
 
 
-def parse_struct_tree(dst, project_data):
+def parse_struct_tree(dst):
     """ Runs through the constructed structure tree and replaces the file contents appropriately. """
     # Walk through project's directories
+    files_to_update = []
     for root, dirs, files in os.walk(dst):
         for file in files:
             # Check whether this file is intended to be updated
             if FILE_KEY in file:
-                # Key found in path, get the relative path
-                file = (Path(root) / file).relative_to(dst)
-                print(f'Detected key: [success]{file.name}[/]... updating contents...')
+                # Key found in file name
+                # Get the path relative to the project folder
+                files_to_update.append( (Path(root) / file).relative_to(dst) )
 
-                new_fname = update_from_template(file, project_data)
-                rename_file(file, new_fname)
+    return files_to_update
 
 
-def parse_keys(raw_string, project_data):
+def parse_keys(raw_string, data):
     """ Parse string for keys such as "{name}". """
-    return raw_string.replace("{name}", project_data['formatted_name'])
+    parser_legend = {
+        "{mp:formatted_name}": data['formatted_name'],
+        "{mp:master_fname}": data['formatted_name'],
+        "{mp:name}": data['name'],
+    }
 
+    for key, val in parser_legend.items():
+        raw_string = raw_string.replace(key, val)
 
-#======================== Messages ========================#
-
-
-def welcome():
-    """ Provides a welcome screen. """
-    console.rule(f'Project Generator v{__version__:.2f}')
-
-
-def declare_project_generation(project_data):
-    """ Prints a header for which type of project is being generated and the location. """
-    console.rule(
-        f'Making [emph]{project_data["type"]}[/] Project at: [success]{project_data["dst"]}[/].'
-    )
-
+    return raw_string
 
 #======================== Queries ========================#
 
-def get_project_type(projects):
+def get_project_type():
     """ Query the user for the project type. """
-    return launch_filter(options=list(projects.keys()))
+    return launch_filter(options=get_struct_options())
 
 
 def get_project_name():
@@ -141,27 +125,54 @@ def get_destination():
 
 #======================== Project Generation ========================#
 
-def generate_project(project_data):
+def generate_project(data):
     """ Main loop function for generating the project. """
-    declare_project_generation(project_data)
-    # Run the generator at this destination
-    project_data['generator'](project_data)
-    print(f'Project [emph]{project_data["name"]}[/] generated: [success]{dst}[/].')
+    # console.rule(
+    #     f'Making [emph]{data["type"]}[/] at: '
+    #     f'[success]{data["dst"]}[/].'
+    # )
+    
+    # Get the raw structure string
+    struct_string = get_struct_string(data["type"])
+    # Parse the structure string for any direct replacements
+    struct_string = parse_keys(struct_string, data)
 
-
-def exercises(project_data):
-    struct_string = get_struct_string(project_data)
+    #--- Generate the project ---#
     try:
-        Filemaker(project_data['dst'], struct_string)
+        Filemaker(data['dst'], struct_string)
     except FileExistsError as e:
         if confirm(
             'Project exists... [red]delete[/] and continue?', default=False
         ):
-            shutil.rmtree(project_data['dst'] / 'exercises')
+            shutil.rmtree(data['dst'] / 'exercises')
             # Run again
-            exercises(project_data)
+            Filemaker(data['dst'], struct_string)
 
-    parse_struct_tree(project_data['dst'], project_data)
+    # Parse the project tree structure for any files to update
+    files_to_update = parse_struct_tree(data['dst'])
+
+    for file in files_to_update:
+        print(f'Detected key: [success]{file.name}[/]... updating contents...')
+
+        template_name = str(file.name)[len(FILE_KEY):]
+
+        # New fname will be in the file contents if any
+        with open(file, 'r') as f: contents = f.read()
+        new_fname = contents if contents != '' else template_name
+
+        # Update the file
+        new_contents = parse_keys(get_template_contents(template_name), data)
+        with open(file, 'w') as f: f.write(new_contents)
+
+        rename_file(file, new_fname)
+
+
+    # The newest folder is the project folder
+    project_folder = max(Path(data["dst"]).glob('*/'), key=os.path.getmtime)
+    print(f'Project [emph]{data["name"]}[/] generated: [success]{project_folder}[/].')
+
+    return project_folder
+    
 
 
 def test():
@@ -177,36 +188,28 @@ def test():
 #======================== Entry ========================#
 
 def main():
-    #------------- Setup -------------#
-    # Dictionary with types of projects and their generators
-    projects = {
-        #--- General Projects ---#
-        # 'master': master,
-        # 'project': ('Project', project),
-        'Exercises': exercises,
-        # 'scripts': scripts,
-        # 'package': package,
-        # 'treatise': treatise,
-        #--- Teaching ---#
-        # 'quizzes': quizzes,
-        # 'worksheets': worksheets,
-    }
+    console.rule(f'Project Generator v{__version__:.2f}')
+    # Get all data relevant to the project
+    project_data = { 'type': get_project_type() }
+    if project_data['type'] is None:
+        sys.exit()
 
-    #------------- Main logic -------------#
-    test()
+    print(f'Generating [emph]{project_data["type"]}[/] project.')
 
-    welcome()
+    project_data['name'] = get_project_name()
+    project_data['dst'] = get_destination()
+    project_data['formatted_name'] = format_name(project_data['name'])
 
-    project_data = {
-        'type': get_project_type(projects),
-        'name': get_project_name(),
-        'formatted_name': format_name(name),
-        'dst': get_destination(),
-    }
-    project_data['generator'] = projects['type']
+    project_folder = generate_project(project_data)
 
-    # Run the generation functions
-    generate_project(project_data)
+    # Change directory
+    print('Changing directories...')
+    # Open folder in finder, open in sublime text, open in iTerm
+    itermlink.run_command_on_active_sess(
+        f'cd {project_folder}'
+        f'open {project_folder};'
+        f'subl {project_folder};'
+    )
 
     
 

@@ -1,9 +1,10 @@
+# Project template for solved problems such as textbook or informal problems that might not immediately belong to a notebook
 exercises:
-    - exercises-{name}.tex
+    - exercises-{mp:formatted_name}.tex
     - preamble.sty
-    - documents:
+    - intro:
         - $gitrepos.tex
-        - $intro.tex
+        - $introduction.tex
         - $nomenclature.tex
     - problem_section:
         - problem_section.tex
