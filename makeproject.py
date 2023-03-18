@@ -17,7 +17,7 @@ from itermlink.tools.console import *
 from itermlink.tools.typing_filter import launch as launch_filter
 import itermlink
 #======================== Fields ========================#
-__version__ = 0.11
+__version__ = 0.12
 FILE_KEY = '$' # key for file replacements
 STRUCT_EXT = '.yaml'
 STRUCT_COMMENT = '#'
@@ -155,11 +155,6 @@ def get_destination():
 
 def generate_project(data):
     """ Main loop function for generating the project. """
-    # console.rule(
-    #     f'Making [emph]{data["type"]}[/] at: '
-    #     f'[success]{data["dst"]}[/].'
-    # )
-    
     # Get the raw structure string
     struct_string = get_struct_string(data["type"])
     # Parse the structure string for any direct replacements
@@ -169,12 +164,18 @@ def generate_project(data):
     try:
         Filemaker(data['dst'], struct_string)
     except FileExistsError as e:
+        print(f'[warning]Project exists[/] as: {e.filename}')
         if confirm(
-            'Project exists... [red]delete[/] and continue?', default=False
+            '[red]Delete[/] existing project and continue?',
+            default=False
         ):
-            shutil.rmtree(data['dst'] / 'exercises')
+            # Delete the conflicting file
+            shutil.rmtree(data['dst'] / e.filename)
             # Run again
             Filemaker(data['dst'], struct_string)
+        else:
+            print('Project generation canceled.')
+            sys.exit()
 
     # Parse the project tree structure for any files to update
     files_to_update = parse_struct_tree(data['dst'])
@@ -198,14 +199,81 @@ def generate_project(data):
     # The newest folder is the project folder
     project_folder = max(Path(data["dst"]).glob('*/'), key=os.path.getmtime)
     print(f'Project [emph]{data["name"]}[/] generated: [success]{project_folder}[/].')
+    print() # padding
 
     return project_folder
+
+
+def open_project(project_folder):
+    """ Runs commands through itermlink to open the session. """
+    command = ''
+
+    if confirm('Open project in iTerm?'):
+        command += f'cd "{project_folder}";'
+        
+    if confirm('Open project in Sublime Text?'):
+        command += f' subl "{project_folder}";'
+
+    if confirm('Open project in Finder?'):
+        command += f' open "{project_folder}";'
+
+    if command: itermlink.run_command_on_active_sess(command)
+
+
+def testproject():
+    """ Generates a test project. """
+    
+    # Get all data relevant to the project
+    project_data = {
+        'type': 'Exercises',
+        # March 15, 2023, 11:44 PM
+        'datetime': datetime.now().strftime("%B %d, %Y, %I:%M %p"),
+        'name': 'Real Analysis',
+        'dst': Path.home() / 'Desktop',
+    }
+    project_data['formatted_name'] = format_name(project_data['name'])
+
+    print(f'Generating [emph]{project_data["type"]}[/] project.')
+    print(f'Name: [emph]{project_data["name"]}[/].')
+    print(f'Location: [emph]{project_data["dst"]}[/].')
+
+    project_folder = generate_project(project_data)
+
+    if confirm('Delete Test Project?'):
+        shutil.rmtree(project_folder)
+        print('Test project [warning]deleted[/].')
+        return
+
+    # Test project isn't deleted, consider opening it
+    command = ''
+
+    if confirm('Open project in iTerm?'):
+        command += f'cd "{project_folder}";'
+        
+    if confirm('Open project in Sublime Text?'):
+        command += f' subl "{project_folder}";'
+
+    if confirm('Open project in Finder?'):
+        command += f' open "{project_folder}";'
+
+    if command: itermlink.run_command_on_active_sess(command)
+
 
 
 #======================== Entry ========================#
 
 def main():
-    console.rule(f'Project Generator v{__version__:.2f}')
+    _TESTING_FLAG = '--testing' in sys.argv
+    launch_message = f'Project Generator v{__version__:.2f}'
+
+    #--- Testing ---#
+    if _TESTING_FLAG:
+        console.rule(launch_message + ' -- [success]Testing mode[/]')
+        testproject()
+        return
+
+    #------------- Main logic -------------#
+    console.rule(launch_message)
     # Get all data relevant to the project
     project_data = {
         'type': get_project_type(),
@@ -223,15 +291,7 @@ def main():
 
     project_folder = generate_project(project_data)
 
-    # Change directory
-    print('Changing directories...')
-    # Open folder in finder, open in sublime text, open in iTerm
-    itermlink.run_command_on_active_sess(
-        f'cd "{project_folder}";'
-        f'open "{project_folder}";'
-        f'subl "{project_folder}";'
-    )
-
+    open_project(project_folder)
     
 
 if __name__ == '__main__':

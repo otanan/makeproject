@@ -6,7 +6,7 @@
 <h2 align="center">Makeproject</h2>
 <br />
   <p align="center">
-    Description.
+    Project template generator using structure definitions provided as .yaml files. Copies existing templates and populates content with provided information.
     <br />
     <br />
     Status: <em>in progress</em>
