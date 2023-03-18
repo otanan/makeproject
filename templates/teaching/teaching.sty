@@ -1,0 +1,54 @@
+%======================== Imports ========================%
+\usepackage{geometry}
+\geometry{
+    top=0.8in, bottom=0.8in,
+    left=0.5in, right=0.5in,
+}
+
+% Argument parsing
+\usepackage{listofitems}
+
+% Common math environments, like bmatrix
+\usepackage{amsmath}
+
+% Multi column support
+\usepackage{multicol}
+
+% Colored text
+\usepackage{xcolor}
+
+%======================== Worksheet Functionality ========================%
+\NewDocumentCommand{\includesection}{ m }{
+    \setsepchar{-}
+    % File name to problem sheet, provided as 1-1 to mean
+    % chapter_1/1-1.tex, for problems on chapter 1 section 1
+    \readlist\probsfname{#1}
+    % Include section contents
+    \input{../../problems/chapter_\probsfname[1]/\probsfname[1]-\probsfname[2]}
+}
+
+
+%======================== Formatting ========================%
+\let\examheader\header % update the header command
+\RenewDocumentCommand{\header}{ m m m }{
+    \firstpageheader
+    {{\large\bfseries #1}}
+    {{\bfseries #2}}
+    {{\large\color{gray} #3}}
+    \runningheader
+    {#1}
+    {}
+    {}
+}
+
+\runningfooter{}{}{Page \thepage}
+
+\newcommand*{\subheader}[1]{
+    \begin{center}
+        \subsubsection*{\underline{#1}}
+    \end{center}
+}
+
+
+%======================== Custom Commands ========================%
+\newcommand*{\R}{\mathbb{R}}

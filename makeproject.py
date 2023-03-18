@@ -164,7 +164,7 @@ def generate_project(data):
     try:
         Filemaker(data['dst'], struct_string)
     except FileExistsError as e:
-        print(f'[warning]Project exists[/] as: {e.filename}')
+        print(f'Project [emph]{e.filename}[/] [warning]already exists[/].')
         if confirm(
             '[red]Delete[/] existing project and continue?',
             default=False
@@ -200,7 +200,7 @@ def generate_project(data):
 
     # The newest folder is the project folder
     project_folder = max(Path(data["dst"]).glob('*/'), key=os.path.getmtime)
-    print(f'Project [emph]{data["name"]}[/] generated: [success]{project_folder}[/].')
+    print(f'[emph]{data["name"]}[/] generated at: [success]{project_folder}[/].')
     print() # padding
 
     return project_folder
@@ -210,13 +210,13 @@ def open_project(project_folder):
     """ Runs commands through itermlink to open the session. """
     command = ''
 
-    if confirm('Open project in iTerm?'):
+    if confirm('Open project in [success]iTerm[/]?'):
         command += f'cd "{project_folder}";'
         
-    if confirm('Open project in Sublime Text?'):
+    if confirm('Open project in [success]Sublime Text[/]?'):
         command += f' subl "{project_folder}";'
 
-    if confirm('Open project in Finder?'):
+    if confirm('Open project in [success]Finder[/]?'):
         command += f' open "{project_folder}";'
 
     if command: itermlink.run_command_on_active_sess(command)
