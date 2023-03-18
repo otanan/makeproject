@@ -102,18 +102,39 @@ def parse_struct_tree(dst):
     return files_to_update
 
 
-def parse_keys(raw_string, data):
+def parse_keys(raw_string, data, filename=''):
+    """ Parses strings for keys to update content with relevant information.
+        
+        Args:
+            raw_string (str): the string to parse.
+
+            data (dict): project data relevant for parsing keys.
+    
+        Kwargs:
+            filename (str): the name of the file whose contents this corresponds to when applicable. Used when inserting filename into the body.
+    
+        Returns:
+            (str): the parsed string
+    
+    """
+    
+
     """ Parse string for keys such as "{name}". """
     parser_legend = {
         "{mp:formatted_name}": data['formatted_name'],
         "{mp:master_fname}": data['formatted_name'],
         "{mp:name}": data['name'],
+        "{mp:filename}": filename,
     }
+    # Format the filename
+    formatted_filename = str(Path(filename).stem).replace('_', ' ').capitalize()
+    parser_legend["{mp:formatted_filename}"] = formatted_filename
 
+    parsed_string = raw_string
     for key, val in parser_legend.items():
-        raw_string = raw_string.replace(key, val)
+        parsed_string = parsed_string.replace(key, val)
 
-    return raw_string
+    return parsed_string
 
 #======================== Queries ========================#
 
@@ -192,7 +213,10 @@ def generate_project(data):
         # Update the file
         # - indicates that the file is in a folder
         template_path = Path(template_name.replace('-', '/'))
-        new_contents = parse_keys(get_template_contents(template_path), data)
+        new_contents = parse_keys(
+            get_template_contents(template_path), data,
+            filename=new_fname
+        )
         with open(file, 'w') as f: f.write(new_contents)
 
         rename_file(file, new_fname)

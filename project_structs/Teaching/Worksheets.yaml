@@ -14,16 +14,16 @@ worksheets:
         - week_01:
             - $teaching-weekly_worksheet.tex: week_01.tex
         - week_02:
-            - week_02.tex
+            - $teaching-weekly_worksheet.tex: week_02.tex
         - week_03:
-            - week_03.tex
+            - $teaching-weekly_worksheet.tex: week_03.tex
         - week_04:
-            - week_04.tex
+            - $teaching-weekly_worksheet.tex: week_04.tex
         - week_05:
-            - week_05.tex
+            - $teaching-weekly_worksheet.tex: week_05.tex
         - week_06:
-            - week_06.tex
+            - $teaching-weekly_worksheet.tex: week_06.tex
         - week_07:
-            - week_07.tex
+            - $teaching-weekly_worksheet.tex: week_07.tex
         - week_08:
-            - week_08.tex
+            - $teaching-weekly_worksheet.tex: week_08.tex
