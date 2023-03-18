@@ -1,4 +1,4 @@
-# Template for generating a Git repo for a new project.
+# Template for generating a Git repository for a new project.
 {mp:formatted_name}:
     - $LICENSE
     - $gitrepo-README.md: README.md

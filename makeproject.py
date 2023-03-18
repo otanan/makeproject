@@ -190,7 +190,9 @@ def generate_project(data):
         new_fname = contents if contents != '' else template_name
 
         # Update the file
-        new_contents = parse_keys(get_template_contents(template_name), data)
+        # - indicates that the file is in a folder
+        template_path = Path(template_name.replace('-', '/'))
+        new_contents = parse_keys(get_template_contents(template_path), data)
         with open(file, 'w') as f: f.write(new_contents)
 
         rename_file(file, new_fname)
@@ -257,7 +259,6 @@ def testproject():
         command += f' open "{project_folder}";'
 
     if command: itermlink.run_command_on_active_sess(command)
-
 
 
 #======================== Entry ========================#
