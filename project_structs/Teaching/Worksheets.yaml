@@ -10,7 +10,7 @@ worksheets:
 
                 \end{questions}
     - sheets:
-        - $teaching-teaching.sty: teaching.sty
+        - $teaching-preamble.sty: teaching.sty
         - week_01:
             - $teaching-weekly_worksheet.tex: week_01.tex
         - week_02:

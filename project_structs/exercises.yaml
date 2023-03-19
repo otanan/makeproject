@@ -1,12 +1,12 @@
 # Notebook for solved problems such as textbook or informal problems that might not immediately belong to a notebook.
-exercises-{mp:formatted_name}:
-    - exercises-{mp:formatted_name}.tex
-    - preamble.sty
-    - references.bib
-    - intro:
-        - $gitrepos.tex
-        - $introduction.tex
-        - $nomenclature.tex
-    - problem_section:
-        - problem_section.tex
-    - $exercises-README.md: README.md
+- exercises-{mp:formatted_name}:
+  - exercises-{mp:formatted_name}.tex
+  - preamble.sty
+  - references.bib
+  - intro:
+    - $gitrepos.tex
+    - $exercises-introduction.tex: introduction.tex
+    - $nomenclature.tex
+  - problem_section:
+    - problem_section.tex
+  - $exercises-README.md: README.md

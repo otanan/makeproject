@@ -1,0 +1,5 @@
+# Generate a parent project which holds several projects as children.
+- {mp:formatted_name}:
+  - $$Project$$
+  - $$Exercises$$
+  - $$Scripts$$

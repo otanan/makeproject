@@ -10,6 +10,7 @@ from pathlib import Path
 import sys # exit
 import os # walk
 import shutil # deleting existing project folders
+import yaml # reading yaml files
 from yamldirs.filemaker import Filemaker # .yaml to folder structure
 from datetime import datetime
 #--- Custom imports ---#
@@ -19,6 +20,7 @@ import itermlink
 #======================== Fields ========================#
 __version__ = 0.12
 FILE_KEY = '$' # key for file replacements
+SUBPROJECT_KEY = '$$' # key for subprojects
 STRUCT_EXT = '.yaml'
 STRUCT_COMMENT = '#'
 STRUCTS_FOLDER = Path(__file__).parent / 'project_structs'
@@ -87,54 +89,6 @@ def rename_file(path, new_fname):
     path.rename(path.parent / new_fname)
 
 
-def parse_struct_tree(dst):
-    """ Runs through the constructed structure tree and replaces the file contents appropriately. """
-    # Walk through project's directories
-    files_to_update = []
-    for root, dirs, files in os.walk(dst):
-        for file in files:
-            # Check whether this file is intended to be updated
-            if FILE_KEY in file:
-                # Key found in file name
-                # Get the path relative to the project folder
-                files_to_update.append( (Path(root) / file).relative_to(dst) )
-
-    return files_to_update
-
-
-def parse_keys(raw_string, data, filename=''):
-    """ Parses strings for keys to update content with relevant information.
-        
-        Args:
-            raw_string (str): the string to parse.
-
-            data (dict): project data relevant for parsing keys.
-    
-        Kwargs:
-            filename (str): the name of the file whose contents this corresponds to when applicable. Used when inserting filename into the body.
-    
-        Returns:
-            (str): the parsed string
-    
-    """
-    
-
-    """ Parse string for keys such as "{name}". """
-    parser_legend = {
-        "{mp:formatted_name}": data['formatted_name'],
-        "{mp:master_fname}": data['formatted_name'],
-        "{mp:name}": data['name'],
-        "{mp:filename}": filename,
-    }
-    # Format the filename
-    formatted_filename = str(Path(filename).stem).replace('_', ' ').capitalize()
-    parser_legend["{mp:formatted_filename}"] = formatted_filename
-
-    parsed_string = raw_string
-    for key, val in parser_legend.items():
-        parsed_string = parsed_string.replace(key, val)
-
-    return parsed_string
 
 #======================== Queries ========================#
 
@@ -172,12 +126,112 @@ def get_destination():
     return dst
 
 
+#======================== Parsers ========================#
+def parse_struct_tree(dst):
+    """ Runs through the constructed structure tree and replaces the file contents appropriately. """
+    # Walk through project's directories
+    files_to_update = []
+    for root, dirs, files in os.walk(dst):
+        for file in files:
+            # Check whether this file is intended to be updated
+            if FILE_KEY in file:
+                # Key found in file name
+                # Get the path relative to the project folder
+                files_to_update.append( (Path(root) / file).relative_to(dst) )
+
+    return files_to_update
+
+
+def parse_keys(raw_string, data, filename=''):
+    """ Parses strings for keys to update content with relevant information.
+        
+        Args:
+            raw_string (str): the string to parse.
+
+            data (dict): project data relevant for parsing keys.
+    
+        Kwargs:
+            filename (str): the name of the file whose contents this corresponds to when applicable. Used when inserting filename into the body.
+    
+        Returns:
+            (str): the parsed string with filled in data
+    
+    """
+    # Parse string for keys such as "{name}".
+    parser_legend = {
+        "{mp:formatted_name}": data['formatted_name'],
+        "{mp:master_fname}": data['formatted_name'],
+        "{mp:name}": data['name'],
+        "{mp:filename}": filename,
+    }
+    # Format the filename
+    formatted_filename = str(Path(filename).stem).replace('_', ' ').capitalize()
+    parser_legend["{mp:formatted_filename}"] = formatted_filename
+
+    parsed_string = raw_string
+    for key, val in parser_legend.items():
+        parsed_string = parsed_string.replace(key, val)
+
+    return parsed_string
+
+
+def get_subproject_value(struct_string):
+    """ Returns Exercises if $$Exercises$$ is contained inside of the struct string. """
+    return struct_string.split(SUBPROJECT_KEY)[1]
+
+
+def parse_subprojects(struct_string):
+    # Subprojects will be inserted as "$$Exercises$$"
+    
+    # Escape from recursion, no further subprojects detected.
+    if SUBPROJECT_KEY not in struct_string:
+        return struct_string
+
+    # There is a subproject
+    subproject = get_subproject_value(struct_string)
+    print(f'Detected subproject: [success]{subproject}[/]. Updating structure...')
+
+    # Get the line number to match the indentation
+    for line_num, line in enumerate(struct_string.splitlines()):
+        if SUBPROJECT_KEY in line: break
+
+    # The number of indentations
+    indent_level = len(line) - len(line.lstrip())
+
+    # Get the subproject structure string
+    subproject_struct = get_struct_string(subproject)
+
+    # Increase indentation of subproject string
+    subproject_lines = subproject_struct.splitlines()
+    for line_num, line in enumerate(subproject_lines):
+        subproject_lines[line_num] = (' ' * indent_level) + line
+
+    # Insert subproject structure into project
+    lines = struct_string.splitlines()
+    new_lines = []
+    for line_num, line in enumerate(lines):
+        if SUBPROJECT_KEY in line:
+            # Found the subproject
+            break
+
+    new_lines = lines[:line_num] + subproject_lines + lines[line_num + 1:]
+    struct_string = '\n'.join(new_lines)
+    # Run parser again to check if there's another subproject
+    return parse_subprojects(struct_string)
+
+
 #======================== Project Generation ========================#
 
 def generate_project(data):
     """ Main loop function for generating the project. """
+
+    #------------- Getting structure -------------#
     # Get the raw structure string
     struct_string = get_struct_string(data["type"])
+
+    #------------- Parsing structure -------------#
+    struct_string = parse_subprojects(struct_string)
+
     # Parse the structure string for any direct replacements
     struct_string = parse_keys(struct_string, data)
 
