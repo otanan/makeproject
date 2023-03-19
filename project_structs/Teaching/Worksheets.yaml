@@ -1,29 +1,29 @@
 # Template for making class worksheets.
 worksheets:
-    - problems:
-        - chapter_1:
-            - 1-1.tex: |
-                %!TEX root = ../../sheets/week_01/week_01.tex
-                \subheader{Systems of Linear Equations}
-                \begin{questions}
-                \question First question.
+  - problems:
+    - chapter_1:
+      - 1-1.tex: |
+        %!TEX root = ../../sheets/week_01/week_01.tex
+        \subheader{Systems of Linear Equations}
+        \begin{questions}
+        \question First question.
 
-                \end{questions}
-    - sheets:
-        - $teaching-preamble.sty: teaching.sty
-        - week_01:
-            - $teaching-weekly_worksheet.tex: week_01.tex
-        - week_02:
-            - $teaching-weekly_worksheet.tex: week_02.tex
-        - week_03:
-            - $teaching-weekly_worksheet.tex: week_03.tex
-        - week_04:
-            - $teaching-weekly_worksheet.tex: week_04.tex
-        - week_05:
-            - $teaching-weekly_worksheet.tex: week_05.tex
-        - week_06:
-            - $teaching-weekly_worksheet.tex: week_06.tex
-        - week_07:
-            - $teaching-weekly_worksheet.tex: week_07.tex
-        - week_08:
-            - $teaching-weekly_worksheet.tex: week_08.tex
+        \end{questions}
+  - sheets:
+    - $teaching-preamble.sty: teaching.sty
+    - week_01:
+      - $teaching-weekly_worksheet.tex: week_01.tex
+    - week_02:
+      - $teaching-weekly_worksheet.tex: week_02.tex
+    - week_03:
+      - $teaching-weekly_worksheet.tex: week_03.tex
+    - week_04:
+      - $teaching-weekly_worksheet.tex: week_04.tex
+    - week_05:
+      - $teaching-weekly_worksheet.tex: week_05.tex
+    - week_06:
+      - $teaching-weekly_worksheet.tex: week_06.tex
+    - week_07:
+      - $teaching-weekly_worksheet.tex: week_07.tex
+    - week_08:
+      - $teaching-weekly_worksheet.tex: week_08.tex

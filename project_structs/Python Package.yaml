@@ -1,2 +1,3 @@
 # NO CURRENT IMPLEMENTATION.
-project-pass: ""
+- $$GitRepo$$:
+  - dummyfile: ""

@@ -18,7 +18,7 @@ from itermlink.tools.console import *
 from itermlink.tools.typing_filter import launch as launch_filter
 import itermlink
 #======================== Fields ========================#
-__version__ = 0.12
+__version__ = 0.13
 FILE_KEY = '$' # key for file replacements
 SUBPROJECT_KEY = '$$' # key for subprojects
 STRUCT_EXT = '.yaml'
@@ -89,7 +89,6 @@ def rename_file(path, new_fname):
     path.rename(path.parent / new_fname)
 
 
-
 #======================== Queries ========================#
 
 def get_project_type():
@@ -124,6 +123,24 @@ def get_destination():
         sys.exit()
 
     return dst
+
+
+def get_project_data():
+    """ Gets relevant project data from the user. """
+    project_data = {
+        'type': get_project_type(),
+        # March 15, 2023, 11:44 PM
+        'datetime': datetime.now().strftime("%B %d, %Y, %I:%M %p"),
+    }
+    if project_data['type'] is None:
+        sys.exit()
+
+    print(f'Generating [emph]{project_data["type"]}[/] project.')
+
+    project_data['name'] = get_project_name()
+    project_data['dst'] = get_destination()
+    project_data['formatted_name'] = format_name(project_data['name'])
+    return project_data
 
 
 #======================== Parsers ========================#
@@ -222,6 +239,40 @@ def parse_subprojects(struct_string):
 
 #======================== Project Generation ========================#
 
+def update_project_contents(data):
+    """ Runs through the project folders in the file system and updates file contents with template contents, and replaces keys with relevant data as well as renames files according to project structure instructions.
+        
+        Args:
+            data (dict): the project data.
+    
+        Returns:
+            (None): none
+    
+    """
+    # Parse the project tree structure for any files to update
+    files_to_update = parse_struct_tree(data['dst'])
+
+    for file in files_to_update:
+        print(f'Detected key: [success]{file.name}[/]... updating contents...')
+
+        template_name = str(file.name)[len(FILE_KEY):]
+
+        # New fname will be in the file contents if any
+        with open(file, 'r') as f: contents = f.read()
+        new_fname = contents if contents else template_name
+
+        # Update the file
+        # - indicates that the file is in a folder
+        template_path = Path(template_name.replace('-', '/'))
+        new_contents = parse_keys(
+            get_template_contents(template_path), data,
+            filename=new_fname
+        )
+        with open(file, 'w') as f: f.write(new_contents)
+
+        rename_file(file, new_fname)
+
+
 def generate_project(data):
     """ Main loop function for generating the project. """
 
@@ -235,10 +286,13 @@ def generate_project(data):
     # Parse the structure string for any direct replacements
     struct_string = parse_keys(struct_string, data)
 
-    #--- Generate the project ---#
+    #------------- Project Generation -------------#
     try:
         Filemaker(data['dst'], struct_string)
+    # except ParserError as e:
+    #     raise ParserError('Parser Error encountered. Invalid yaml formatting in project structure.')
     except FileExistsError as e:
+        # Conflicting folder exists, delete it and regenerate
         print(f'Project [emph]{e.filename}[/] [warning]already exists[/].')
         if confirm(
             '[red]Delete[/] existing project and continue?',
@@ -252,29 +306,8 @@ def generate_project(data):
             print('Project generation canceled.')
             sys.exit()
 
-    # Parse the project tree structure for any files to update
-    files_to_update = parse_struct_tree(data['dst'])
 
-    for file in files_to_update:
-        print(f'Detected key: [success]{file.name}[/]... updating contents...')
-
-        template_name = str(file.name)[len(FILE_KEY):]
-
-        # New fname will be in the file contents if any
-        with open(file, 'r') as f: contents = f.read()
-        new_fname = contents if contents != '' else template_name
-
-        # Update the file
-        # - indicates that the file is in a folder
-        template_path = Path(template_name.replace('-', '/'))
-        new_contents = parse_keys(
-            get_template_contents(template_path), data,
-            filename=new_fname
-        )
-        with open(file, 'w') as f: f.write(new_contents)
-
-        rename_file(file, new_fname)
-
+    update_project_contents(data)
 
     # The newest folder is the project folder
     project_folder = max(Path(data["dst"]).glob('*/'), key=os.path.getmtime)
@@ -327,8 +360,8 @@ def testproject():
     # Test project isn't deleted, consider opening it
     command = ''
 
-    if confirm('Open project in iTerm?'):
-        command += f'cd "{project_folder}";'
+    # if confirm('Open project in iTerm?'):
+    #     command += f'cd "{project_folder}";'
         
     if confirm('Open project in Sublime Text?'):
         command += f' subl "{project_folder}";'
@@ -353,23 +386,10 @@ def main():
 
     #------------- Main logic -------------#
     console.rule(launch_message)
+
     # Get all data relevant to the project
-    project_data = {
-        'type': get_project_type(),
-        # March 15, 2023, 11:44 PM
-        'datetime': datetime.now().strftime("%B %d, %Y, %I:%M %p"),
-    }
-    if project_data['type'] is None:
-        sys.exit()
-
-    print(f'Generating [emph]{project_data["type"]}[/] project.')
-
-    project_data['name'] = get_project_name()
-    project_data['dst'] = get_destination()
-    project_data['formatted_name'] = format_name(project_data['name'])
-
+    project_data = get_project_data()
     project_folder = generate_project(project_data)
-
     open_project(project_folder)
     
 
