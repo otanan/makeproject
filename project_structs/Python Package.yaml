@@ -1,3 +1,6 @@
-# NO CURRENT IMPLEMENTATION.
+# Folder structure for writing a pip-installable and publishable Python package.
 - $$GitRepo$$:
-  - dummyfile: ""
+  - requirements.txt
+  - $setup.py
+  - {mp:formatted_name}:
+    - __init__.py

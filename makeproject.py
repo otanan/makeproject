@@ -144,17 +144,42 @@ def get_project_data():
 
 
 #======================== Parsers ========================#
-def parse_struct_tree(dst):
-    """ Runs through the constructed structure tree and replaces the file contents appropriately. """
-    # Walk through project's directories
+def parse_struct_tree(dst, structure):
+    """ Runs through the project structure folder tree and updates the relevant files with proper template data.
+        
+        Args:
+            dst (pathlib.PosixPath): the path to the parent folder holding the project
+
+            structure (dict): the project structure
+    
+        Returns:
+            (None): none
+    
+    """
+    # Path of files to be updated after performing walk
     files_to_update = []
-    for root, dirs, files in os.walk(dst):
-        for file in files:
-            # Check whether this file is intended to be updated
-            if FILE_KEY in file:
-                # Key found in file name
-                # Get the path relative to the project folder
-                files_to_update.append( (Path(root) / file).relative_to(dst) )
+
+    # All files/parent folders to walk through. Paths to files here will be
+    # ones outside of any folders at the topmost directory of the project.
+    paths = [
+        list(item.keys())[0]
+        for item in structure
+    ]
+
+    #------------- Walking -------------#
+    for path in paths:
+        # First check parents folders and loose files which will be ignored by 
+        # walk
+        if FILE_KEY in path:
+            # Key found in file name, should be updated
+            files_to_update.append(Path(path))
+
+        for root, _, files in os.walk(path):
+            for file in files:
+                # Check whether this file is intended to be updated
+                if FILE_KEY in file:
+                    rel_path = Path(root) / file
+                    files_to_update.append(rel_path)
 
     return files_to_update
 
@@ -250,7 +275,7 @@ def update_project_contents(data):
     
     """
     # Parse the project tree structure for any files to update
-    files_to_update = parse_struct_tree(data['dst'])
+    files_to_update = parse_struct_tree(data['dst'], data['structure'])
 
     for file in files_to_update:
         print(f'Detected key: [success]{file.name}[/]... updating contents...')
@@ -264,10 +289,19 @@ def update_project_contents(data):
         # Update the file
         # - indicates that the file is in a folder
         template_path = Path(template_name.replace('-', '/'))
-        new_contents = parse_keys(
-            get_template_contents(template_path), data,
-            filename=new_fname
-        )
+        try:
+            new_contents = parse_keys(
+                get_template_contents(template_path), data,
+                filename=new_fname
+            )
+        except FileNotFoundError as e:
+            print('[failure]Error gathering template contents.')
+            print(
+                f'Failed to parse keys for template path: '
+                f'[failure]{template_path}[/], for file: [failure]{file}[/].'
+            )
+            sys.exit()
+
         with open(file, 'w') as f: f.write(new_contents)
 
         rename_file(file, new_fname)
@@ -285,6 +319,9 @@ def generate_project(data):
 
     # Parse the structure string for any direct replacements
     struct_string = parse_keys(struct_string, data)
+
+    # Store the completed structure as a proper dictionary
+    data['structure'] = yaml.safe_load(struct_string)
 
     #------------- Project Generation -------------#
     try:
