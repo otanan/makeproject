@@ -18,7 +18,7 @@ from itermlink.tools.console import *
 from itermlink.tools.typing_filter import launch as launch_filter
 import itermlink
 #======================== Fields ========================#
-__version__ = 0.13
+__version__ = '0.0.1.13'
 FILE_KEY = '$' # key for file replacements
 SUBPROJECT_KEY = '$$' # key for subprojects
 STRUCT_EXT = '.yaml'
@@ -413,7 +413,7 @@ def testproject():
 
 def main():
     _TESTING_FLAG = '--testing' in sys.argv
-    launch_message = f'Project Generator v{__version__:.2f}'
+    launch_message = f'Project Generator v{__version__}'
 
     #--- Testing ---#
     if _TESTING_FLAG:

@@ -8,7 +8,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='{mp:formatted_name}',
-    version='0.0.0.0',
+    version='0.0.1.13',
     description='{mp:name}',
     license='GNU GENERAL PUBLIC LICENSE',
     url='https://github.com/otanan/{mp:formatted_name}',
