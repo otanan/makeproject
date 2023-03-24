@@ -1,0 +1,5 @@
+# Configuration file
+structure_extension: .yaml
+keys:
+  file: $ # key for file replacements
+  subproject: $$ # key for subprojects

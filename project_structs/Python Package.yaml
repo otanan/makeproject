@@ -2,5 +2,8 @@
 - $$GitRepo$$:
   - requirements.txt
   - $setup.py
+  # Folder with Package name, i.e. makeproject
   - {mp:formatted_name}:
-    - __init__.py
+    - $init.py: __init__.py
+    # Main script with Package name (can be renamed), i.e. makeproject.py
+    - {mp:formatted_name}.py

@@ -15,16 +15,20 @@ from yamldirs.filemaker import Filemaker # .yaml to folder structure
 from datetime import datetime
 #--- Custom imports ---#
 from itermlink.tools.console import *
-from itermlink.tools.typing_filter import launch as launch_filter
+from typing_filter import launch as launch_filter
 import itermlink
 #======================== Fields ========================#
 __version__ = '0.0.1.13'
-FILE_KEY = '$' # key for file replacements
-SUBPROJECT_KEY = '$$' # key for subprojects
+ROOT = Path(__file__).parent
+STRUCTS_FOLDER = ROOT / 'project_structs'
+TEMPLATE_FOLDER = ROOT / 'templates'
+CONFIG_PATH = ROOT / 'config.yaml'
+
+#--- Default configuration ---#
 STRUCT_EXT = '.yaml'
 STRUCT_COMMENT = '#'
-STRUCTS_FOLDER = Path(__file__).parent / 'project_structs'
-TEMPLATE_FOLDER = Path(__file__).parent / 'templates'
+FILE_KEY = '$' # key for file replacements
+SUBPROJECT_KEY = '$$' # key for subprojects
 #======================== Readers ========================#
 
 def get_template_contents(contents_name):
@@ -42,6 +46,20 @@ def get_struct_string(project_type):
 
 
 #======================== Helper ========================#
+
+def load_config():
+    """ Load the configuration file. """
+    with open(CONFIG_PATH, 'r') as f:
+        config = yaml.safe_load(f.read())
+
+    print('Configuration loaded [success]successfully.[/]')
+
+    global STRUCT_EXT, STRUCT_COMMENT, FILE_KEY, SUBPROJECT_KEY
+    STRUCT_EXT = config['structure_extension']
+    STRUCT_COMMENT = '#'
+    FILE_KEY = config['keys']['file']
+    SUBPROJECT_KEY = config['keys']['subproject']
+
 
 def get_struct_options():
     """ Gets all existing project structure options. """
@@ -412,6 +430,8 @@ def testproject():
 #======================== Entry ========================#
 
 def main():
+    load_config()
+
     _TESTING_FLAG = '--testing' in sys.argv
     launch_message = f'Project Generator v{__version__}'
 
