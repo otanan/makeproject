@@ -14,8 +14,9 @@ import yaml # reading yaml files
 from yamldirs.filemaker import Filemaker # .yaml to folder structure
 from datetime import datetime
 #--- Custom imports ---#
-from itermlink.tools.console import *
 from typing_filter import launch as launch_filter
+import yamltree
+from itermlink.tools.console import *
 import itermlink
 #======================== Fields ========================#
 __version__ = '0.0.1.13'
@@ -46,6 +47,11 @@ def get_struct_string(project_type):
 
 
 #======================== Helper ========================#
+
+def quit():
+    print('[failure]Project generation canceled.')
+    sys.exit()
+
 
 def load_config():
     """ Load the configuration file. """
@@ -134,13 +140,7 @@ def get_project_name():
 
 def get_destination():
     """ Gets the destination folder for any copying. """
-    dst = Path.cwd()
-    # Check whether cwd is desired destination
-    if not confirm(f'Make project at [emph]{dst}[/]?'):
-        print('[failure]Exiting...')
-        sys.exit()
-
-    return dst
+    return Path.cwd()
 
 
 def get_project_data():
@@ -255,16 +255,13 @@ def parse_subprojects(struct_string):
     for line_num, line in enumerate(struct_string.splitlines()):
         if SUBPROJECT_KEY in line: break
 
-    # The number of indentations
-    indent_level = len(line) - len(line.lstrip())
-
     # Get the subproject structure string
     subproject_struct = get_struct_string(subproject)
 
     # Increase indentation of subproject string
     subproject_lines = subproject_struct.splitlines()
     for line_num, line in enumerate(subproject_lines):
-        subproject_lines[line_num] = (' ' * indent_level) + line
+        subproject_lines[line_num] = (' ' * yamltree.indent_count(line)) + line
 
     # Insert subproject structure into project
     lines = struct_string.splitlines()
@@ -334,6 +331,7 @@ def generate_project(data):
 
     #------------- Parsing structure -------------#
     struct_string = parse_subprojects(struct_string)
+    print() # Padding
 
     # Parse the structure string for any direct replacements
     struct_string = parse_keys(struct_string, data)
@@ -342,6 +340,14 @@ def generate_project(data):
     data['structure'] = yaml.safe_load(struct_string)
 
     #------------- Project Generation -------------#
+    #--- Print project structure and confirm ---#
+    tree = yamltree.struct_string_to_tree(struct_string)
+    print(f'Destination: [empy]{data["dst"]}[/].')
+    print('Project structure:')
+    print(f'[success]{tree}')
+    if not confirm('Continue?'):
+        quit()
+
     try:
         Filemaker(data['dst'], struct_string)
     # except ParserError as e:
@@ -358,15 +364,12 @@ def generate_project(data):
             # Run again
             Filemaker(data['dst'], struct_string)
         else:
-            print('Project generation canceled.')
-            sys.exit()
+            quit()
 
 
     update_project_contents(data)
 
-    # The newest folder is the project folder
-    project_folder = max(Path(data["dst"]).glob('*/'), key=os.path.getmtime)
-    print(f'[emph]{data["name"]}[/] generated at: [success]{project_folder}[/].')
+    print(f'[emph]{data["name"]}[/] generated[/].')
     print() # padding
 
     return project_folder
@@ -433,7 +436,7 @@ def main():
     load_config()
 
     _TESTING_FLAG = '--testing' in sys.argv
-    launch_message = f'Project Generator v{__version__}'
+    launch_message = f'Project Generator [success]v{__version__}[/]'
 
     #--- Testing ---#
     if _TESTING_FLAG:
