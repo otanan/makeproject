@@ -19,7 +19,7 @@ import yamltree
 from itermlink.tools.console import *
 import itermlink
 #======================== Fields ========================#
-__version__ = '0.0.1.13'
+__version__ = '0.0.2.0'
 ROOT = Path(__file__).parent
 STRUCTS_FOLDER = ROOT / 'project_structs'
 TEMPLATE_FOLDER = ROOT / 'templates'
@@ -328,9 +328,12 @@ def generate_project(data):
     #------------- Getting structure -------------#
     # Get the raw structure string
     struct_string = get_struct_string(data["type"])
+    struct_string = yamltree.remove_comments(struct_string)
 
     #------------- Parsing structure -------------#
     struct_string = parse_subprojects(struct_string)
+    # Remove comments included from subprojects
+    struct_string = yamltree.remove_comments(struct_string)
     print() # Padding
 
     # Parse the structure string for any direct replacements
@@ -340,6 +343,7 @@ def generate_project(data):
     data['structure'] = yaml.safe_load(struct_string)
 
     #------------- Project Generation -------------#
+    
     #--- Print project structure and confirm ---#
     tree = yamltree.struct_string_to_tree(struct_string)
     print(f'Destination: [empy]{data["dst"]}[/].')
