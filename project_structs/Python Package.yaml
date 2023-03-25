@@ -1,5 +1,5 @@
 # Folder structure for writing a pip-installable and publishable Python package.
-- $$GitRepo$$:
+- $$Github Repo$$:
   - requirements.txt
   - $setup.py
   # Folder with Package name, i.e. makeproject

@@ -40,7 +40,7 @@ def get_template_contents(contents_name):
 
 def get_struct_string(project_type):
     """ Gets the YAML struct string to generate the project. """
-    yaml_fname = project_type.lower() + '.yaml'
+    yaml_fname = project_type + '.yaml'
 
     with open(STRUCTS_FOLDER / yaml_fname, 'r') as f:
         return f.read()
@@ -255,13 +255,15 @@ def parse_subprojects(struct_string):
     for line_num, line in enumerate(struct_string.splitlines()):
         if SUBPROJECT_KEY in line: break
 
+    # Respect the indentation of the subproject
+    indent = yamltree.indent_count(line) - 2
     # Get the subproject structure string
     subproject_struct = get_struct_string(subproject)
 
     # Increase indentation of subproject string
     subproject_lines = subproject_struct.splitlines()
     for line_num, line in enumerate(subproject_lines):
-        subproject_lines[line_num] = (' ' * yamltree.indent_count(line)) + line
+        subproject_lines[line_num] = (' ' * indent) + line
 
     # Insert subproject structure into project
     lines = struct_string.splitlines()
@@ -343,7 +345,6 @@ def generate_project(data):
     data['structure'] = yaml.safe_load(struct_string)
 
     #------------- Project Generation -------------#
-    
     #--- Print project structure and confirm ---#
     tree = yamltree.struct_string_to_tree(struct_string)
     print(f'Destination: [empy]{data["dst"]}[/].')

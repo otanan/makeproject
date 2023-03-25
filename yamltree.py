@@ -76,8 +76,12 @@ def adjust_for_future_children(line, future_lines):
 
     for future_line in future_lines:
         future_indent = indent_count(future_line)
+        if future_indent == 0:
+            # We've reached another top level project, no future children
+            return line
+
         # There is a future i.e. such as c
-        if 0 < future_indent < current_indent:
+        if future_indent < current_indent:
             return line[:future_indent] + CHILD_PADDING + '│' + line[future_indent + 1:]
 
     return line
@@ -87,22 +91,42 @@ def adjust_for_future_children(line, future_lines):
 def annotate_tree(tree):
     """ Annotates lines on the tree. """
     lines = tree.splitlines()
-    width = len(max(lines, key=len))
-    annotated_tree_list = []
-    for line in lines:
+
+    # List of line numbers to annotate
+    lines_to_annotate = []
+    #--- Replace filenames ---#
+    for line_num, line in enumerate(lines):
         try:
             key_index = line.index('$')
         except ValueError:
-            annotated_tree_list.append(line)
             continue
 
+        lines_to_annotate.append(line_num)
         # Remove the keys
-        line = line.replace('$', '')
-        padding = width - len(line)
-        line += (' ' * padding) + '[emph]<-- Will be updated[/]'
-        annotated_tree_list.append(line)
+        fname = ''
+        if ':' in line:
+            # The filename can be provided as the contents of the line
+            fname = line.split(':')[1].strip()
+        
+        if fname:
+            line = line[:key_index] + fname
+        else:
+            # No new filename was provided, just use the existing one
+            line = line.replace('$', '')
 
-    return '\n'.join(annotated_tree_list)
+        # Update the lines
+        lines[line_num] = line
+
+    # Annotate the lines
+    width = len(max(lines, key=len))
+    for line_num in lines_to_annotate:
+        line = lines[line_num]
+
+        padding = width - len(line)
+        line += (' ' * padding) + '[emph]<-- Contents will be generated[/]'
+        lines[line_num] = line
+
+    return '\n'.join(lines)
 
 
 def struct_string_to_tree(struct_string):
@@ -129,9 +153,9 @@ def struct_string_to_tree(struct_string):
         tree_prefix = CHILD_PADDING
 
         if is_last_child_line(lines, line_num):
-            tree_prefix += '└──'
+            tree_prefix += '└── '
         else: 
-            tree_prefix += '├──'
+            tree_prefix += '├── '
 
         line = line.replace('- ', tree_prefix)
 
@@ -152,7 +176,7 @@ def main():
     - subject_1: []
     - to_read: []
     - $papers-README.md: README.md
-  - exercises-tester:
+- exercises-tester:
   - exercises-tester.tex
   - preamble.sty
   - references.bib
