@@ -82,7 +82,7 @@ def adjust_for_future_children(line, future_lines):
 
         # There is a future i.e. such as c
         if future_indent < current_indent:
-            return line[:future_indent] + CHILD_PADDING + '│' + line[future_indent + 1:]
+            return line[:future_indent] + CHILD_PADDING + '┃' + line[future_indent + 1:]
 
     return line
 
@@ -153,9 +153,9 @@ def struct_string_to_tree(struct_string):
         tree_prefix = CHILD_PADDING
 
         if is_last_child_line(lines, line_num):
-            tree_prefix += '└── '
+            tree_prefix += '┗━━ '
         else: 
-            tree_prefix += '├── '
+            tree_prefix += '┣━━ '
 
         line = line.replace('- ', tree_prefix)
 

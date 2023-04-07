@@ -1,9 +1,11 @@
 # Folder structure for writing a pip-installable and publishable Python package.
 - $$Github Repo$$:
   - requirements.txt
-  - $setup.py
+  - $pyproject.toml
   # Folder with Package name, i.e. makeproject
   - {mp:formatted_name}:
     - $init.py: __init__.py
     # Main script with Package name (can be renamed), i.e. makeproject.py
     - {mp:formatted_name}.py
+  - tests:
+    - __init__.py

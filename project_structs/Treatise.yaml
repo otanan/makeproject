@@ -1,2 +1,12 @@
-# NO CURRENT IMPLEMENTATION.
-- project-pass: ""
+# Comprehensive notebook for studying background material on a subject and presenting it in a readable format for sharing.
+- treatise-{mp:formatted_name}:
+  - treatise-{mp:formatted_name}.tex
+  - preamble.sty
+  - references.bib
+  - $treatise-README.md: README.md
+  - intro:
+    - $gitrepos.tex
+    - $nomenclature.tex
+    - $treatise-introduction.tex: introduction.tex
+  - chapters: []
+  - figures: []

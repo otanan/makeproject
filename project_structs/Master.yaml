@@ -1,6 +1,6 @@
 # Generate a parent project which holds several projects as children.
 - {mp:formatted_name}:
-  # - $$Project$$
+  - $$Project$$
   # Papers to read on the subject. Contained outside of project folder
   # since often papers are will be shared across projects.
   - papers:

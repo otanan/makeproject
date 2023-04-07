@@ -3,10 +3,10 @@
   - exercises-{mp:formatted_name}.tex
   - preamble.sty
   - references.bib
+  - $exercises-README.md: README.md
   - intro:
     - $gitrepos.tex
     - $exercises-introduction.tex: introduction.tex
     - $nomenclature.tex
   - problem_section:
     - problem_section.tex
-  - $exercises-README.md: README.md

@@ -374,10 +374,8 @@ def generate_project(data):
 
     update_project_contents(data)
 
-    print(f'[emph]{data["name"]}[/] generated[/].')
+    print(f'[emph]{data["name"]}[/] [success]generated[/].')
     print() # padding
-
-    return project_folder
 
 
 def open_project(project_folder):
@@ -454,8 +452,8 @@ def main():
 
     # Get all data relevant to the project
     project_data = get_project_data()
-    project_folder = generate_project(project_data)
-    open_project(project_folder)
+    generate_project(project_data)
+    open_project(project_data['dst'])
     
 
 if __name__ == '__main__':
