@@ -1,21 +1,43 @@
-%======================== Imports ========================%
+%=============================================================================%
+%========= Imports
+%=============================================================================%
 \usepackage{geometry}
 \geometry{
     top=0.8in, bottom=0.8in,
     left=0.5in, right=0.5in,
 }
 
-% Argument parsing
-\usepackage{listofitems}
+% Math symbols, like \mathbb{R}
+\usepackage{amssymb}
 
 % Common math environments, like bmatrix
 \usepackage{amsmath}
+
+% Argument parsing
+\usepackage{listofitems}
 
 % Multi column support
 \usepackage{multicol}
 
 % Colored text
 \usepackage{xcolor}
+\definecolor{jd_blue}{HTML}{6CA3D8}
+
+% Tables
+\usepackage{tabularx}
+
+%======================== Final Imports ========================%
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks = false,
+    linktoc = all,
+    citecolor = jd_blue,
+    citebordercolor = jd_blue,
+    linkcolor = jd_blue,
+    linkbordercolor = jd_blue,
+    urlcolor = jd_blue,
+    urlbordercolor = jd_blue,
+}
 
 %======================== Worksheet Functionality ========================%
 \NewDocumentCommand{\includesection}{ m }{
@@ -28,7 +50,11 @@
 }
 
 
-%======================== Formatting ========================%
+%=============================================================================%
+%========= Formatting
+%=============================================================================%
+
+%======================== Headers ========================%
 \let\examheader\header % update the header command
 \RenewDocumentCommand{\header}{ m m m }{
     \firstpageheader
@@ -41,7 +67,6 @@
     {}
 }
 
-\runningfooter{}{}{Page \thepage}
 
 \newcommand*{\subheader}[1]{
     \begin{center}
@@ -50,5 +75,30 @@
 }
 
 
-%======================== Custom Commands ========================%
+%======================== Footers ========================%
+\newcommand*{\printemailfooter}{
+    \firstpagefooter{\url{jonathan.delgado@uci.edu}}{}{}
+}
+
+\runningfooter{}{}{Page \thepage}
+
+
+%======================== Grading ========================%
+\newcommand*{\printgradetable}{%
+    \begin{center}%
+        \gradetable%
+    \end{center}%
+}
+
+
+%======================== Student information ========================%
+\newcommand*{\printnamefield}{%
+    {\bfseries Name: \hrulefill}%
+}
+
+
+%=============================================================================%
+%========= Custom Commands
+%=============================================================================%
 \newcommand*{\R}{\mathbb{R}}
+\DeclareMathOperator{\Mat}{Mat}

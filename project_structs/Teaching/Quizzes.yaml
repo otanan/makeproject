@@ -1,2 +1,25 @@
-# NO CURRENT IMPLEMENTATION.
-- project-pass: ""
+# Generate quizzes to assess students.
+- assessments:
+
+  - $teaching-preamble.sty: teaching.sty
+
+  - quiz_01:
+    - $teaching-quiz.tex: quiz_01.tex
+
+  - quiz_02:
+    - $teaching-quiz.tex: quiz_02.tex
+
+  - quiz_03:
+    - $teaching-quiz.tex: quiz_03.tex
+
+  - quiz_04:
+    - $teaching-quiz.tex: quiz_04.tex
+
+  - quiz_05:
+    - $teaching-quiz.tex: quiz_05.tex
+
+  - quiz_06:
+    - $teaching-quiz.tex: quiz_06.tex
+
+  - quiz_07:
+    - $teaching-quiz.tex: quiz_07.tex

@@ -122,7 +122,7 @@ def annotate_tree(tree):
     for line_num in lines_to_annotate:
         line = lines[line_num]
 
-        padding = width - len(line)
+        padding = width - len(line) + 1
         line += (' ' * padding) + '[emph]<-- Contents will be generated[/]'
         lines[line_num] = line
 
