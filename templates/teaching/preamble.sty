@@ -22,6 +22,7 @@
 % Colored text
 \usepackage{xcolor}
 \definecolor{jd_blue}{HTML}{6CA3D8}
+\definecolor{jd_green}{HTML}{ADEBBB}
 
 % Tables
 \usepackage{tabularx}
@@ -47,6 +48,11 @@
     \readlist\probsfname{#1}
     % Include section contents
     \input{../../problems/chapter_\probsfname[1]/\probsfname[1]-\probsfname[2]}
+}
+
+% Write answers in place that are only shown when answers are printed
+\newcommand*{\answer}[1]{
+    \ifprintanswers{\color{jd_green}#1}\fi
 }
 
 
@@ -80,7 +86,7 @@
     \firstpagefooter{\url{jonathan.delgado@uci.edu}}{}{}
 }
 
-\runningfooter{}{}{Page \thepage}
+\runningfooter{}{}{Page \thepage\ of \numpages}
 
 
 %======================== Grading ========================%
@@ -100,5 +106,11 @@
 %=============================================================================%
 %========= Custom Commands
 %=============================================================================%
+
+%--- Numbers ---%
+\newcommand*{\Z}{\mathbb{Z}}
 \newcommand*{\R}{\mathbb{R}}
+
+%--- Linear Algebra ---%
 \DeclareMathOperator{\Mat}{Mat}
+\DeclareMathOperator{\GL}{GL}
