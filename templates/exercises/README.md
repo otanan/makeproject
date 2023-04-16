@@ -6,6 +6,3 @@ Record relevant solved problems such as for previous homeworks or studying for e
 
 ## Example
 Chapter 3 problems from Principles of Mathematical Analysis by Walter Rudin.
-
-## Legend
-- [x] Public

@@ -256,7 +256,7 @@ def parse_subprojects(struct_string):
         if SUBPROJECT_KEY in line: break
 
     # Respect the indentation of the subproject
-    indent = yamltree.indent_count(line) - 2
+    indent = yamltree.get_indent(line)
     # Get the subproject structure string
     subproject_struct = get_struct_string(subproject)
 
@@ -334,6 +334,7 @@ def generate_project(data):
 
     #------------- Parsing structure -------------#
     struct_string = parse_subprojects(struct_string)
+
     # Remove comments included from subprojects
     struct_string = yamltree.remove_comments(struct_string)
     print() # Padding
