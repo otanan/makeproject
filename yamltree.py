@@ -75,16 +75,17 @@ def get_piece_at_depth(line, depth):
     return line[start_space:end_space]
 
 
-def next_depth_is_different(depth, future_depths):
-    return not future_depths or future_depths[0] != depth
+def is_child_piece(depth, future_depths):
+    if not future_depths: return True
+    if future_depths[0] != depth: return True
 
+    # Not a child iff there's a folder/file in the same dir
+    # iff there's a matching depth before a larger one
+    for fut_depth in future_depths:
+        if fut_depth > depth: return True
+        if fut_depth == depth: return False
 
-def swap_child_for_branch(line, depth):
-    """ Swaps the tree_child piece (if it exists) for the tree_branch piece. Used for corrections. """
-    if get_piece_at_depth(line, depth) == TREE_CHILD:
-        return place_tree_piece(line, depth, TREE_BRANCH)
-
-    return line
+    return True
 
 
 def get_substruct_strings(struct_string):
@@ -107,63 +108,78 @@ def get_substruct_strings(struct_string):
 
 #======================== Main ========================#
 def _make_tree(struct_string):
-    """ Main tree generation function. Takes a (sub)structure string and converts it into a tree. """
+    """ Actual tree generation. """
     lines = struct_string.splitlines()
     # Indentation counts
     depths = get_depths(lines)
 
-    #--- Remove indents ---#
+    # Make a matrix of all tree children, to later connect missing columns
+    tree_child_matrix = [
+        [False] * (max(depths) + 1)
+        for _ in lines
+    ]
+
+    #--- Remove indents and corrective spacing ---#
     for i, line in enumerate(lines):
-        lines[i] = line[SPACE_TO_INDENT:]
+        depth = depths[i]
+        line = line[SPACE_TO_INDENT:]
+
+        space_to_add = depth * (TREE_PIECE_WIDTH - SPACE_TO_INDENT)
+        line = (' ' * space_to_add) + line
+        lines[i] = line
 
     #--- Realign indentations to account for pieces and first corrections ---#
     for i, line in enumerate(lines):
         depth = depths[i]
-        future_depths = depths[i + 1:]
-
         # Skip base space
         if depth == 0: continue
 
-        space_to_add = depth * (TREE_PIECE_WIDTH - SPACE_TO_INDENT)
-        new_line = (' ' * space_to_add) + line
-
-        # Assume all pieces are children first
-        if next_depth_is_different(depth, future_depths):
-            new_line = place_tree_piece(new_line, depth, TREE_CHILD)
-        else:
-            new_line = place_tree_piece(new_line, depth, TREE_BRANCH)
-
-        # Testing
-        lines[i] = new_line
-
-    #--- Account for future depths ---#
-    for i, line in enumerate(lines):
-        # Skip accounted for pipes
-        if TREE_PIPE in line: continue
-        if i == 0: continue
-        depth = depths[i]
         future_depths = depths[i + 1:]
 
-        for j, future_depth in enumerate(future_depths):
+        if is_child_piece(depth, future_depths):
+            line = place_tree_piece(line, depth, TREE_CHILD)
+        else:
+            line = place_tree_piece(line, depth, TREE_BRANCH)
 
-            if future_depth < depth:
-                line = place_tree_piece(line, future_depth, TREE_PIPE)
-                # Fix previous line
-                lines[i - 1] = swap_child_for_branch(
-                    lines[i - 1], future_depth
-                )
 
-                next_depth = depth
-                for fut_depth in future_depths[j:]:
-                    if fut_depth > depth: break
-
-                    if fut_depth < depth - 1:
-                        next_depth = fut_depth 
-                        break
-
-                if fut_depth < depth: break
-
+        tree_child_matrix[i][depth] = True
         lines[i] = line
+
+    #--- Insert pipes to connect tree children ---#    
+    for i in reversed(range(len(lines))):
+        if i == 0: break # nothing to do at first row
+
+        row = tree_child_matrix[i]
+        for j in range(len(row)):
+            # Nothing to connect here
+            if not row[j]: continue
+
+            # Found a tree child
+            # Climb backwards and insert pipes
+            back_index = i - 1
+            # If the above entry has a piece, we're done
+            # If the above entry is deeper, then we don't want to
+            # connect with it
+            above_entry = tree_child_matrix[back_index][j] or (depths[back_index] < depths[i])
+            # Connect with everything above
+            while not above_entry:
+                lines[back_index] = place_tree_piece(
+                    lines[back_index], j, TREE_PIPE
+                )
+                tree_child_matrix[back_index][j] = True
+
+                back_index -= 1
+
+                # Get the information on the new above entry
+                above_entry = tree_child_matrix[back_index][j] or (depths[back_index] < depths[i])
+
+                # We're about to break out of the loop
+                # Set the above entry to a branch since we've been connecting 
+                # with it
+                if above_entry:
+                    lines[back_index] = place_tree_piece(
+                        lines[back_index], j, TREE_BRANCH
+                    )
 
     return '\n'.join(lines)
 
@@ -179,9 +195,6 @@ def struct_string_to_tree(struct_string):
         └── c
             └── f    
     """
-    print( f'Original Structure String[fail]: \n{struct_string}[/]' )
-    
-
     # First split the structure string into all subtree strings.
     substruct_strings = get_substruct_strings(struct_string)
     # Turn them into subtrees
