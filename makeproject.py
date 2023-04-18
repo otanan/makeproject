@@ -18,8 +18,9 @@ from typing_filter import launch as launch_filter
 import yamltree
 from itermlink.tools.console import *
 import itermlink
+import parser
 #======================== Fields ========================#
-__version__ = '0.0.2.0'
+__version__ = '0.0.3.0'
 ROOT = Path(__file__).parent
 STRUCTS_FOLDER = ROOT / 'project_structs'
 TEMPLATE_FOLDER = ROOT / 'templates'
@@ -202,11 +203,11 @@ def parse_struct_tree(dst, structure):
     return files_to_update
 
 
-def parse_keys(raw_string, data, filename=''):
+def parse_keys(string, data, filename=''):
     """ Parses strings for keys to update content with relevant information.
         
         Args:
-            raw_string (str): the string to parse.
+            string (str): the string to parse.
 
             data (dict): project data relevant for parsing keys.
     
@@ -217,6 +218,9 @@ def parse_keys(raw_string, data, filename=''):
             (str): the parsed string with filled in data
     
     """
+    # Execute code strings before parsing other keys
+    string = parser.parse_code_keys(string)
+
     # Parse string for keys such as "{name}".
     parser_legend = {
         "{mp:formatted_name}": data['formatted_name'],
@@ -228,7 +232,7 @@ def parse_keys(raw_string, data, filename=''):
     formatted_filename = str(Path(filename).stem).replace('_', ' ').capitalize()
     parser_legend["{mp:formatted_filename}"] = formatted_filename
 
-    parsed_string = raw_string
+    parsed_string = string
     for key, val in parser_legend.items():
         parsed_string = parsed_string.replace(key, val)
 
@@ -237,7 +241,7 @@ def parse_keys(raw_string, data, filename=''):
 
 def get_subproject_value(struct_string):
     """ Returns Exercises if $$Exercises$$ is contained inside of the struct string. """
-    return struct_string.split(SUBPROJECT_KEY)[1]
+    return parser.find_key_contents(struct_string, key='$$')
 
 
 def parse_subprojects(struct_string):

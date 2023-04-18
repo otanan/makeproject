@@ -4,9 +4,15 @@
   - preamble.sty
   - references.bib
   - $treatise-README.md: README.md
-  - intro:
-    - $gitrepos.tex
-    - $nomenclature.tex
-    - $treatise-introduction.tex: introduction.tex
-  - chapters: []
+  # Folders
   - figures: []
+  - parts:
+    - intro:
+      - $gitrepos.tex
+      - $nomenclature.tex
+      - $treatise-introduction.tex: introduction.tex
+    - part_1:
+      - chapter_1.tex: |
+          %!TEX root = ../../{mp:master_fname}.tex
+          \chapter{Chapter 1}
+    - appendix: []
