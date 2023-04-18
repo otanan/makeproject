@@ -8,26 +8,10 @@
   - sheets:
     - $teaching-preamble.sty: teaching.sty
 
-    - week_01:
-      - $teaching-weekly_worksheet.tex: week_01.tex
-
-    - week_02:
-      - $teaching-weekly_worksheet.tex: week_02.tex
-
-    - week_03:
-      - $teaching-weekly_worksheet.tex: week_03.tex
-
-    - week_04:
-      - $teaching-weekly_worksheet.tex: week_04.tex
-
-    - week_05:
-      - $teaching-weekly_worksheet.tex: week_05.tex
-
-    - week_06:
-      - $teaching-weekly_worksheet.tex: week_06.tex
-
-    - week_07:
-      - $teaching-weekly_worksheet.tex: week_07.tex
-
-    - week_08:
-      - $teaching-weekly_worksheet.tex: week_08.tex
+# Generate worksheets
+{mp:code=
+quiz_string="""    - week_{:02d}:
+      - $teaching-weekly_worksheet.tex: week_{:02d}.tex"""
+for i in range(1, 8 + 1):
+  print(quiz_string.format(i, i))
+/}

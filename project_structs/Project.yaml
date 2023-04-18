@@ -38,9 +38,9 @@
   - presentations:
     - $READMEs-presentations.md: README.md
     # Placeholder presentation
-    - 21-3-27_presentation_title:
+    - {mp:date}_presentation_title:
       - preamble.sty
-      - 21-3-27_presentation_title.tex
+      - {mp:date}_presentation_title.tex
 
   - reports:
     - $READMEs-reports.md: README.md

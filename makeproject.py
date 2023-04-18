@@ -12,7 +12,7 @@ import os # walk
 import shutil # deleting existing project folders
 import yaml # reading yaml files
 from yamldirs.filemaker import Filemaker # .yaml to folder structure
-from datetime import datetime
+from datetime import datetime, date
 #--- Custom imports ---#
 from typing_filter import launch as launch_filter
 import yamltree
@@ -227,6 +227,8 @@ def parse_keys(string, data, filename=''):
         "{mp:master_fname}": data['formatted_name'],
         "{mp:name}": data['name'],
         "{mp:filename}": filename,
+        # Date cuts out the 20 from 2023
+        "{mp:date}": str(date.today())[2:],
     }
     # Format the filename
     formatted_filename = str(Path(filename).stem).replace('_', ' ').capitalize()
