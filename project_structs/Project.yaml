@@ -2,21 +2,7 @@
 - {mp:formatted_name}:
   - $READMEs-project.md: README.md
 
-  # Research notebook
-  - research_notebook:
-    - preamble.sty
-    - $research_notebook-notebook.md: README.md
-    - references.bib
-    - research_notebook.tex
-    - figures: []
-    - intro:
-      - $nomenclature.tex
-      - $introduction.tex
-      - $gitrepos.tex
-    - notes:
-      - $research_notebook-note.md: README.md
-      - first_note:
-        - first_note.tex
+  - $$Notebooks/Research$$
 
   - data:
     - raw: []
