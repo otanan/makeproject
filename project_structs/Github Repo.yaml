@@ -1,5 +1,0 @@
-# Template for generating a Git repository for a new project.
-- {mp:formatted_name}:
-  - $LICENSE
-  - README.md
-  - .gitignore
