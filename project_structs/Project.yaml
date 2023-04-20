@@ -28,6 +28,8 @@
       - preamble.sty
       - {mp:date}_presentation_title.tex
 
+  - $$Lectures$$
+
   - reports:
     - $READMEs-reports.md: README.md
 

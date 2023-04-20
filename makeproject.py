@@ -13,6 +13,7 @@ import shutil # deleting existing project folders
 import yaml # reading yaml files
 from yamldirs.filemaker import Filemaker # .yaml to folder structure
 from datetime import datetime, date
+import argparse
 #--- Custom imports ---#
 from typing_filter import launch as launch_filter
 import yamltree
@@ -68,6 +69,23 @@ def load_config():
     SUBPROJECT_KEY = config['keys']['subproject']
 
 
+def _init_args():
+    """ Initialize arguments """
+    parser = argparse.ArgumentParser(
+        prog='MakeProject',
+        description='Project generator for various projects from Python, to LaTeX, teaching, etc.',
+        # epilog='Text at the bottom of help'
+    )
+
+    # Testing flag
+    parser.add_argument('-t', '--testing', action='store_true')
+
+    # Print the keys
+    parser.add_argument('-k', '--keys', action='store_true')
+
+    return parser.parse_args()
+
+
 def get_struct_options():
     """ Gets all existing project structure options. """
     structs = []
@@ -112,6 +130,27 @@ def rename_file(path, new_fname):
     
     """
     path.rename(path.parent / new_fname)
+
+
+def _print_keys():
+    # Keys with their descriptions.
+    keys = {
+        "{mp:name}": 'The name of the project provided.',
+
+        "{mp:master_fname}": 'The (predicted) name of the "master" file. Typically taken as the first item in the project structure.',
+
+        "{mp:formatted_name}": 'The file-friendly formatted name for the project, e.g. "Linear Algebra" turns into linear_algebra.',
+
+        "{mp:filename}": 'The name of the file in consideration.',
+        # Date cuts out the 20 from 2023
+        "{mp:date}": 'The current date, if today is Jan. 2nd, 2023, the date is printed as 2023-01-02, for sorting.',
+
+        "{mp:code= python_code_to_execute /}": 'A user-definable key that runs any Python code between "code=" and "/}". Captures the output of this code, so print statements are used to generate the text that will be inserted.'
+    }
+    
+    for key, desc in keys.items():
+        print(f'[success]{key}[/]: {desc}')
+        print() # padding
 
 
 #======================== Queries ========================#
@@ -443,13 +482,19 @@ def testproject():
 #======================== Entry ========================#
 
 def main():
+    args = _init_args()
     load_config()
-
-    _TESTING_FLAG = '--testing' in sys.argv
     launch_message = f'Project Generator [success]v{__version__}[/]'
+    
+    #------------- Argument evaluation -------------#
+
+    #--- Print keys ---#
+    if args.keys:
+        _print_keys()
+        return
 
     #--- Testing ---#
-    if _TESTING_FLAG:
+    if args.testing:
         console.rule(launch_message + ' -- [success]Testing mode[/]')
         testproject()
         return
