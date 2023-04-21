@@ -12,7 +12,7 @@ Token parsers should have 3 pieces of information.
 #------------- Imports -------------#
 from datetime import datetime, date
 #--- Custom imports ---#
-from itermlink.tools.console import * # temporary
+from console import *
 #------------- Fields -------------#
 #======================== Token Parsers ========================#
 
@@ -78,16 +78,3 @@ def print_tokens():
         '[success]{mp:code= python_code_to_execute /}[/]: '
         'A user-definable key that runs any Python code between "{mp:code=" and "/}". Captures the output of this code, so print statements are used to generate the text that will be inserted. As an example, [success]{mp:code=print(2**8 - 1)/}[/] will replace this key with the string: 255.'
     )
-
-
-#======================== Entry ========================#
-
-def main():
-    pass
-    
-
-if __name__ == '__main__':
-    try:
-        main()
-    except KeyboardInterrupt as e:
-        print('Keyboard interrupt.')

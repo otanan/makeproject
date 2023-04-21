@@ -11,6 +11,7 @@ import re
 import io # redirect stdout for executing code and capturing output
 from contextlib import redirect_stdout
 #--- Custom imports ---#
+from console import *
 #------------- Fields -------------#
 #======================== Helper ========================#
 
@@ -31,8 +32,11 @@ def find_token_contents(string, start_token=None, end_token=None, token=None):
     if start_token not in string: return None
 
     # Escape reserved regex tokens
-    start_token = _escape_reserved_re_chars(start_token)
-    end_token = _escape_reserved_re_chars(end_token)
+    # Save the original tokens for error messages
+    orig_start_token = start_token
+    orig_end_token = end_token
+    start_token = _escape_reserved_re_chars(orig_start_token)
+    end_token = _escape_reserved_re_chars(orig_end_token)
 
     # The regex search query
     # (?s) allows for line breaks in string
@@ -40,7 +44,13 @@ def find_token_contents(string, start_token=None, end_token=None, token=None):
     # while not returning the start or end token.
     search_query = f'(?s){start_token}(.+?){end_token}'
     
-    return re.search(search_query, string)[1]
+    results = re.search(search_query, string)
+    if results is None:
+        print(f'[fail]Start token: "{orig_start_token}" found but end token: '
+            f'"{orig_end_token}" missing. Could not parse token.')
+        quit()
+
+    return results[1]
 
 
 def parse_code_tokens(string):

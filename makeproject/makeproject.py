@@ -17,11 +17,13 @@ import argparse
 import tkinter as tk # choosing directory for project generation
 from tkinter import filedialog
 #--- Custom imports ---#
+from itermlink.tools.console import *
+import itermlink
+from console import *
+import setup_makeproject
 import yamltree
 import parser
 import tokens
-from itermlink.tools.console import *
-import itermlink
 #======================== Fields ========================#
 ROOT = Path(__file__).parent
 STRUCT_EXT = '.yaml'
@@ -37,7 +39,7 @@ SUBPROJECT_KEY = '$$' # key for subprojects
 PROMPTER = 'inquirer'
 # For opening the config file, defaults to just running open
 EDITOR = 'open'
-#======================== Helper ========================#
+#======================== Initialization ========================#
 
 def load_config():
     """ Load the configuration file. """
@@ -61,13 +63,14 @@ def load_config():
     SUBPROJECT_KEY = config['tokens']['subproject']
 
 
-def quit():
-    print('[failure]Project generation canceled.')
-    sys.exit()
-
-
 def get_struct_options():
     """ Gets all existing project structure options. """
+    if not STRUCTS_FOLDER.is_dir():
+        # Structs folder does not exist. Try to make one
+        if not setup_makeproject.make_structs_folder(STRUCTS_FOLDER):
+            # No folder was made
+            quit()
+
     structs = []
     for root, dirs, files in os.walk(STRUCTS_FOLDER):
         for file in files:
@@ -89,22 +92,13 @@ def get_struct_options():
                         description = first_line[len(STRUCT_COMMENT):].strip()
 
                 structs.append( (name, description) )
+
+    if not structs:
+        # Folder has no structures
+        print(f'No structures found in {STRUCTS_FOLDER}.')
+        quit()
+
     return structs
-
-
-def rename_file(path, new_fname):
-    """ Renames a file.
-        
-        Args:
-            path (pathlib.PosixPath): the path to the file to be renamed.
-
-            new_fname (str): the new name for the file, not its path.
-    
-        Returns:
-            (None): none
-    
-    """
-    path.rename(path.parent / new_fname)
 
 
 #======================== Arguments ========================#
@@ -164,6 +158,22 @@ def _open_structs():
 def _open_templates():
     """ Open the project templates folder. """
     os.system(f'open {TEMPLATES_FOLDER}')
+
+
+#======================== Helper ========================#
+def rename_file(path, new_fname):
+    """ Renames a file.
+        
+        Args:
+            path (pathlib.PosixPath): the path to the file to be renamed.
+
+            new_fname (str): the new name for the file, not its path.
+    
+        Returns:
+            (None): none
+    
+    """
+    path.rename(path.parent / new_fname)
 
 
 #======================== Readers ========================#
@@ -251,6 +261,7 @@ def get_project_name():
 def get_destination():
     """ Gets the destination folder for any copying. """
     dst = Path.cwd()
+    return dst # do not prompt on dst until tkinter macos bug is fixed
     # Confirm the destination
     if confirm(f'Generate project at: [emph]{dst}[/]'):
         return dst
