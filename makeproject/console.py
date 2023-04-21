@@ -28,8 +28,8 @@ theme = rich.theme.Theme({
     'success': cgreen,
     # Emphasis
     'emph': cblue,
+    'warning': 'red',
     # Amaranth red
-    'warning': '#E03E52',
     'fail': '#E03E52'
 })
 #--- Input and printing ---#

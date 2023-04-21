@@ -17,8 +17,6 @@ import argparse
 import tkinter as tk # choosing directory for project generation
 from tkinter import filedialog
 #--- Custom imports ---#
-from itermlink.tools.console import *
-import itermlink
 from console import *
 import setup_makeproject
 import yamltree
@@ -141,7 +139,7 @@ def _init_args():
     keys_parser.set_defaults(func=tokens.print_tokens)
 
     # Testing flag
-    parser.add_argument('-t', '--testing', action='store_true')
+    # parser.add_argument('-t', '--testing', action='store_true')
 
     return parser.parse_args()
 
@@ -153,11 +151,11 @@ def _open_config():
 
 def _open_structs():
     """ Open the project structures folder. """
-    os.system(f'open {STRUCTS_FOLDER}')
+    open_folder_in_explorer(STRUCTS_FOLDER)
 
 def _open_templates():
     """ Open the project templates folder. """
-    os.system(f'open {TEMPLATES_FOLDER}')
+    open_folder_in_explorer(TEMPLATES_FOLDER)
 
 
 #======================== Helper ========================#
@@ -174,6 +172,11 @@ def rename_file(path, new_fname):
     
     """
     path.rename(path.parent / new_fname)
+
+
+def open_folder_in_explorer(path):
+    """ Open folder in system's file explorer. """
+    os.system(f'open {path}')
 
 
 #======================== Readers ========================#
@@ -505,58 +508,14 @@ def generate_project(data):
     print() # padding
 
 
-def open_project(project_folder):
+def open_project(struct):
     """ Runs commands through itermlink to open the session. """
-    command = ''
-
-    if confirm('Open project in [success]iTerm[/]?'):
-        command += f'cd "{project_folder}";'
-        
-    if confirm('Open project in [success]Sublime Text[/]?'):
-        command += f' subl "{project_folder}";'
-
-    if confirm('Open project in [success]Finder[/]?'):
-        command += f' open "{project_folder}";'
-
-    if command: itermlink.run_command_on_active_sess(command)
-
-
-def testproject():
-    """ Generates a test project. """
-    
-    # Get all data relevant to the project
-    project_data = {
-        'type': 'Exercises',
-        # March 15, 2023, 11:44 PM
-        'datetime': datetime.now().strftime("%B %d, %Y, %I:%M %p"),
-        'name': 'Real Analysis',
-        'dst': Path.home() / 'Desktop',
-    }
-
-    print(f'Generating [emph]{project_data["type"]}[/] project.')
-    print(f'Name: [emph]{project_data["name"]}[/].')
-    print(f'Location: [emph]{project_data["dst"]}[/].')
-
-    project_folder = generate_project(project_data)
-
-    if confirm('Delete Test Project?'):
-        shutil.rmtree(project_folder)
-        print('Test project [warning]deleted[/].')
+    if not confirm('Open project?'):
         return
-
-    # Test project isn't deleted, consider opening it
-    command = ''
-
-    # if confirm('Open project in iTerm?'):
-    #     command += f'cd "{project_folder}";'
-        
-    if confirm('Open project in Sublime Text?'):
-        command += f' subl "{project_folder}";'
-
-    if confirm('Open project in Finder?'):
-        command += f' open "{project_folder}";'
-
-    if command: itermlink.run_command_on_active_sess(command)
+    
+    for substruct in struct:
+        folder = list(substruct)[0]
+        open_folder_in_explorer(folder)
 
 
 #======================== Entry ========================#
@@ -571,19 +530,13 @@ def main():
         # Only run the subcommand
         sys.exit()
 
-    #--- Testing ---#
-    if args.testing:
-        console.rule(launch_message + ' -- [success]Testing mode[/]')
-        testproject()
-        return
-
     #------------- Main logic -------------#
     # console.rule(launch_message)
 
     # Get all data relevant to the project
     project_data = get_project_data()
     generate_project(project_data)
-    open_project(project_data['dst'])
+    open_project(project_data['structure'])
     
 
 if __name__ == '__main__':
