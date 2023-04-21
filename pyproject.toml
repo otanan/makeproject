@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "makeproject"
+version = "0.0.3.1"
+description = "Project generator for various projects from Python, to LaTeX, teaching, etc."
+authors = ["Jonathan Delgado <jonathandelgado0327@gmail.com>"]
+homepage = "https://jdelgado.net/"
+repository = "https://github.com/otanan/makeproject"
+
+readme = "README.md"
+license = "GNU GENERAL PUBLIC LICENSE"
+include = ["LICENSE"]
+
+# keywords = [""]
+classifiers = [
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.7",
+]
+
+[tool.poetry.dependencies]
+python = ">=3.7"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
