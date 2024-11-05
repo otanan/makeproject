@@ -186,9 +186,9 @@ def get_template_contents(template_name):
 
     if not template_path.is_file():
         print(
-            'Template not found for filename: '
-            f'[failure]{template_name}[/]. '
-            f'Checked path: [blue]{template_path}[/].'
+            'Template [failure]not found[/] for filename: '
+            f'[emph]{template_name}[/]. '
+            f'Checked path: [emph]{template_path}[/].'
         )
         quit()
 

@@ -22,15 +22,15 @@ theme = rich.theme.Theme({
     # Syntax highlighting for numbers, light mint
     "repr.number": "#9DFBCC",
     #--- Colors ---#
-    'blue': cblue,
     'green': cgreen,
-    #--- Meaning ---#
+    #--- Semantic colors ---#
     'success': cgreen,
     # Emphasis
-    'emph': cblue,
+    'emph': 'blue',
+    # Softer red than a failure
     'warning': 'red',
     # Amaranth red
-    'fail': '#E03E52'
+    'failure': '#E03E52'
 })
 #--- Input and printing ---#
 console = rich.console.Console(theme=theme)
@@ -60,5 +60,5 @@ def Progress(label='Progress'):
 
 
 def quit():
-    print('[failure]Project generation canceled.')
+    print('[warning]Project generation canceled.')
     sys.exit()

@@ -24,9 +24,13 @@ def _formatted_name(data):
 
 def _filename(data): return data['filename']
 
-def _master_fname(data): return _formatted_name(data)
+def _master_fname(data):
+    """ Formats the master name for a file-friendly name. """
+    return data['name'].replace(' ', '_').replace('-', '_')
 
-def _date(_): return str(date.today())[2:]
+def _date(_): 
+    # 24-05-16
+    return str(date.today())[2:].replace('-', '_')
 
 def _datetime(_): return datetime.now().strftime("%B %d, %Y, %I:%M %p")
 
@@ -48,7 +52,7 @@ TOKENS = [
         'func': _filename,
     },
     {
-        'name': '{mp:master_fname}',
+        'name': '{mp:master_name}',
         'desc': 'The (predicted) name of the "master" file. Typically taken as the first item in the project structure.',
         'func': _master_fname,
     },

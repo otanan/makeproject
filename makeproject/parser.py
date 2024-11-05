@@ -46,7 +46,7 @@ def find_token_contents(string, start_token=None, end_token=None, token=None):
     
     results = re.search(search_query, string)
     if results is None:
-        print(f'[fail]Start token: "{orig_start_token}" found but end token: '
+        print(f'[failure]Start token: "{orig_start_token}" found but end token: '
             f'"{orig_end_token}" missing. Could not parse token.')
         quit()
 
