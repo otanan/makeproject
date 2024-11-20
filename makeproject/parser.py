@@ -11,7 +11,7 @@ import re
 import io # redirect stdout for executing code and capturing output
 from contextlib import redirect_stdout
 #--- Custom imports ---#
-from console import *
+from makeproject.console import *
 #------------- Fields -------------#
 #======================== Helper ========================#
 

@@ -12,7 +12,7 @@ Token parsers should have 3 pieces of information.
 #------------- Imports -------------#
 from datetime import datetime, date
 #--- Custom imports ---#
-from console import *
+from makeproject.console import *
 #------------- Fields -------------#
 #======================== Token Parsers ========================#
 
@@ -29,8 +29,12 @@ def _master_fname(data):
     return data['name'].replace(' ', '_').replace('-', '_')
 
 def _date(_): 
-    # 24-05-16
+    # 24_05_16
     return str(date.today())[2:].replace('-', '_')
+
+def _fulldate(_): 
+    # January 2, 2023
+    return date.today().strftime('%B %d, %Y')
 
 def _datetime(_): return datetime.now().strftime("%B %d, %Y, %I:%M %p")
 
@@ -58,8 +62,13 @@ TOKENS = [
     },
     {
         'name': '{mp:date}',
-        'desc': 'The current date, if today is Jan. 2nd, 2023, the date is printed as 2023-01-02, for sorting.',
+        'desc': 'The current date formatted for sorting. If today is Jan. 2nd, 2023, the date is printed as "2023_01_02".',
         'func': _date,
+    },
+    {
+        'name': '{mp:fulldate}',
+        'desc': 'The current date formatted for writing. If today is Jan. 2nd, 2023, the date is printed as "January 2, 2023".',
+        'func': _fulldate,
     },
     {
         'name': '{mp:datetime}',

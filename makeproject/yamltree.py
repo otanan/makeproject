@@ -6,7 +6,7 @@
 """
 #------------- Imports -------------#
 #--- Custom imports ---#
-from console import *
+from makeproject.console import *
 #------------- Fields -------------#
 SPACE_TO_INDENT = 2 # number of spaces for a single indentation
 #--- Tree Parts ---#

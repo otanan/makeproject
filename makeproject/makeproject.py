@@ -17,11 +17,11 @@ import argparse
 import tkinter as tk # choosing directory for project generation
 from tkinter import filedialog
 #--- Custom imports ---#
-from console import *
-import setup_makeproject
-import yamltree
-import parser
-import tokens
+from makeproject.console import *
+import makeproject.setup_makeproject as setup_makeproject
+import makeproject.yamltree as yamltree
+import makeproject.parser as parser
+import makeproject.tokens as tokens
 #======================== Fields ========================#
 ROOT = Path(__file__).parent
 STRUCT_EXT = '.yaml'
