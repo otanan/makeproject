@@ -2,6 +2,8 @@ __pycache__
 .pyinstaller
 .tmp
 .venv
+build
+dist
 icon.iconset
 
 # Built .app file
