@@ -1,0 +1,6 @@
+PyQt6>=6.6.0
+PyYAML>=6.0.1
+requests>=2.31.0
+packaging>=23.0
+PyInstaller>=6.0.0
+
