@@ -17,11 +17,11 @@ import argparse
 import tkinter as tk # choosing directory for project generation
 from tkinter import filedialog
 #--- Custom imports ---#
-from makeproject.console import *
-import makeproject.setup_makeproject as setup_makeproject
-import makeproject.yamltree as yamltree
-import makeproject.parser as parser
-import makeproject.tokens as tokens
+from console import *
+import setup_makeproject
+import yamltree
+import parser
+import tokens
 #======================== Fields ========================#
 ROOT = Path(__file__).parent
 STRUCT_EXT = '.yaml'
@@ -127,6 +127,12 @@ def _init_args():
     )
     structs_parser.set_defaults(func=_open_structs)
 
+    # Show project structs
+    structs_parser = subparsers.add_parser(
+        'showstructs', help="Print a list of all existing project structures." 
+    )
+    structs_parser.set_defaults(func=_show_structs)
+
     # Open project templates
     templates_parser = subparsers.add_parser(
         'templates', help="open the project templates folder to edit existing templates." 
@@ -137,6 +143,13 @@ def _init_args():
         'tokens', help="view available tokens for defining project structures and writing templates."
     )
     keys_parser.set_defaults(func=tokens.print_tokens)
+
+
+    #--- Run makeproject from command-line ---#
+    parser.add_argument('-proj', '--project', help='Which project to make.')
+    parser.add_argument('-name', '--name', help='The name of the project.')
+    parser.add_argument('-o', '--output', help='The output path of the project.')
+
 
     # Testing flag
     # parser.add_argument('-t', '--testing', action='store_true')
@@ -157,6 +170,12 @@ def _open_templates():
     """ Open the project templates folder. """
     open_folder_in_explorer(TEMPLATES_FOLDER)
 
+def _show_structs():
+    """ Print out the list of all existing structures. """
+    load_config()
+    # structs = [f'{s[0]} - {s[1]}' for s in get_struct_options()]
+    structs = [[s[0], s[1]] for s in get_struct_options()]
+    print(structs)
 
 #======================== Helper ========================#
 def rename_file(path, new_fname):
@@ -453,8 +472,19 @@ def update_project_contents(data):
         rename_file(file, new_fname)
 
 
-def generate_project(data):
-    """ Main loop function for generating the project. """
+def generate_project(data, force=False):
+    """ Main loop function for generating the project.
+        
+        Args:
+            data (dict): the project information including name, destination, and type..
+    
+        Kwargs:
+            force (bool): whether to force the creation and skip the prompts. Useful for command-line generation.
+    
+        Returns:
+            (None): none
+    
+    """
 
     #------------- Getting structure -------------#
     # Get the raw structure string
@@ -480,7 +510,7 @@ def generate_project(data):
     print(f'Destination: [empy]{data["dst"]}[/].')
     print('Project structure:')
     print(f'[success]{tree}')
-    if not confirm('Continue?'):
+    if not force and not confirm('Continue?'):
         quit()
 
     try:
@@ -490,7 +520,7 @@ def generate_project(data):
     except FileExistsError as e:
         # Conflicting folder exists, delete it and regenerate
         print(f'Project [emph]{e.filename}[/] [warning]already exists[/].')
-        if confirm(
+        if force or confirm(
             '[red]Delete[/] existing project and continue?',
             default=False
         ):
@@ -528,6 +558,16 @@ def main():
     if args.func is not None:
         args.func()
         # Only run the subcommand
+        sys.exit()
+
+    #--- Run from command-line ---#
+    if args.project is not None and args.output is not None and args.name is not None:
+        project_data = {
+            'type': args.project,
+            'name': args.name,
+            'dst': Path(args.output)
+        }
+        generate_project(project_data, force=True)
         sys.exit()
 
     #------------- Main logic -------------#

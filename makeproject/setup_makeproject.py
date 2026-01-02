@@ -7,7 +7,7 @@
 #------------- Imports -------------#
 # import sys
 #--- Custom imports ---#
-from makeproject.console import *
+from console import *
 #------------- Fields -------------#
 #======================== Helper ========================#
 
