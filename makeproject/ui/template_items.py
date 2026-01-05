@@ -3,7 +3,88 @@ Reusable list item widgets for template panels.
 """
 
 from PyQt6.QtCore import Qt, QSize, pyqtSignal
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy
+from PyQt6.QtGui import QFontMetrics, QIcon, QPainter, QPixmap
+from PyQt6.QtWidgets import (
+    QWidget,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QSizePolicy,
+)
+
+
+class InlineEdit(QLineEdit):
+    """Inline edit with a trailing return-key hint."""
+
+    _return_symbol = "↩"
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._base_margins = self.textMargins()
+        self._icon_padding = 8
+        self._hint_action = None
+        self._hint_width = 0
+        self._install_return_hint()
+        self.textChanged.connect(self._update_return_hint_visibility)
+
+    def _install_return_hint(self):
+        icon = self._build_return_icon()
+        self._hint_action = self.addAction(
+            icon, QLineEdit.ActionPosition.TrailingPosition
+        )
+        self._hint_action.setEnabled(False)
+        self._hint_action.setVisible(True)
+        self._update_return_hint_visibility()
+
+    def _build_return_icon(self) -> QIcon:
+        metrics = QFontMetrics(self.font())
+        text_width = metrics.horizontalAdvance(self._return_symbol)
+        text_height = metrics.height()
+        self._hint_width = text_width
+
+        pixmap = QPixmap(text_width + 2, text_height + 2)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(self.palette().color(self.palette().ColorRole.PlaceholderText))
+        painter.drawText(
+            pixmap.rect(),
+            Qt.AlignmentFlag.AlignCenter,
+            self._return_symbol,
+        )
+        painter.end()
+
+        return QIcon(pixmap)
+
+    def _update_return_hint_visibility(self):
+        if not self._hint_action:
+            return
+        left = self._base_margins.left()
+        top = self._base_margins.top()
+        right = self._base_margins.right()
+        bottom = self._base_margins.bottom()
+        available = self.width() - left - right - self._icon_padding - self._hint_width
+        text_width = QFontMetrics(self.font()).horizontalAdvance(self.text())
+        visible = text_width < available
+        self._hint_action.setVisible(visible)
+        if visible:
+            margin_right = max(right, self._hint_width + self._icon_padding)
+            self.setTextMargins(left, top, margin_right, bottom)
+        else:
+            self.setTextMargins(left, top, right, bottom)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_return_hint_visibility()
+
+    def changeEvent(self, event):
+        from PyQt6.QtCore import QEvent
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.PaletteChange:
+            if self._hint_action:
+                self._hint_action.setIcon(self._build_return_icon())
+                self._update_return_hint_visibility()
 
 
 class TemplateListItem(QWidget):
@@ -45,7 +126,7 @@ class TemplateListItem(QWidget):
 
         # Name label or inline edit
         if editable:
-            self.name_edit = QLineEdit()
+            self.name_edit = InlineEdit()
             self.name_edit.setPlaceholderText(placeholder)
             self.name_edit.setProperty("class", "inlineEdit")
             self.name_edit.installEventFilter(self)

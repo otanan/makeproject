@@ -6,6 +6,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen, QMouseEvent
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QWidget
 
+from .. import __version__
 from ..widgets import ToggleSwitch
 
 
@@ -97,6 +98,7 @@ class TitleBar(QFrame):
         layout.addStretch()
         self.title_label = QLabel("MakeProject")
         self.title_label.setObjectName("titleLabel")
+        self.title_label.setToolTip(f"Version {__version__}")
         layout.addWidget(self.title_label)
         layout.addStretch()
 

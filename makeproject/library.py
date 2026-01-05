@@ -10,7 +10,8 @@ from typing import Dict, List, Optional
 
 # Application Support paths
 APP_SUPPORT_DIR = Path.home() / "Library" / "Application Support" / "MakeProject"
-PROJECT_TEMPLATES_DIR = APP_SUPPORT_DIR / "project_templates"
+DEFAULT_PROJECT_TEMPLATES_DIR = APP_SUPPORT_DIR / "project_templates"
+DEFAULT_FILE_TEMPLATES_DIR = APP_SUPPORT_DIR / "file_templates"
 FILE_TEMPLATES_PATH = APP_SUPPORT_DIR / "file_templates.yaml"
 CUSTOM_TOKENS_PATH = APP_SUPPORT_DIR / "custom_tokens.yaml"
 PREFERENCES_PATH = APP_SUPPORT_DIR / "preferences.yaml"
@@ -50,16 +51,24 @@ DEFAULT_CUSTOM_TOKENS = {
 }
 
 
+def _ensure_app_support_dir():
+    """Create base app support directories."""
+    APP_SUPPORT_DIR.mkdir(parents=True, exist_ok=True)
+    UPDATES_DIR.mkdir(parents=True, exist_ok=True)
+
+
 def ensure_directories():
     """Create required directories if they don't exist."""
-    APP_SUPPORT_DIR.mkdir(parents=True, exist_ok=True)
-    PROJECT_TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
-    UPDATES_DIR.mkdir(parents=True, exist_ok=True)
+    _ensure_app_support_dir()
+    get_project_templates_dir().mkdir(parents=True, exist_ok=True)
+    get_file_templates_dir().mkdir(parents=True, exist_ok=True)
 
 
 def seed_defaults():
     """Seed default file templates on first run."""
-    if not FILE_TEMPLATES_PATH.exists():
+    ensure_directories()
+    _migrate_file_templates()
+    if not _has_file_templates():
         save_file_templates(DEFAULT_FILE_TEMPLATES)
 
 
@@ -82,6 +91,32 @@ def initialize():
     seed_custom_tokens()
 
 
+def get_project_templates_dir() -> Path:
+    """Return the project templates directory, honoring user preferences."""
+    prefs = load_preferences()
+    path_value = prefs.get("project_templates_dir")
+    if isinstance(path_value, str) and path_value.strip():
+        return Path(path_value).expanduser()
+    return DEFAULT_PROJECT_TEMPLATES_DIR
+
+
+def get_file_templates_dir() -> Path:
+    """Return the file templates directory, honoring user preferences."""
+    prefs = load_preferences()
+    path_value = prefs.get("file_templates_dir")
+    if isinstance(path_value, str) and path_value.strip():
+        return Path(path_value).expanduser()
+    return DEFAULT_FILE_TEMPLATES_DIR
+
+
+def set_template_paths(project_templates_dir: Path, file_templates_dir: Path):
+    """Persist template storage locations."""
+    prefs = load_preferences()
+    prefs["project_templates_dir"] = str(project_templates_dir)
+    prefs["file_templates_dir"] = str(file_templates_dir)
+    save_preferences(prefs)
+
+
 # --- Project Templates ---
 
 def list_project_templates() -> List[str]:
@@ -90,7 +125,7 @@ def list_project_templates() -> List[str]:
     """
     ensure_directories()
     templates = []
-    for f in PROJECT_TEMPLATES_DIR.glob("*.yaml"):
+    for f in get_project_templates_dir().glob("*.yaml"):
         templates.append((f.stem, f.stat().st_mtime))
     # Sort by modification time (oldest first, so new ones appear at bottom)
     templates.sort(key=lambda x: x[1])
@@ -99,22 +134,27 @@ def list_project_templates() -> List[str]:
 
 def load_project_template(name: str) -> Optional[str]:
     """Load a project template's YAML content by name."""
-    path = PROJECT_TEMPLATES_DIR / f"{name}.yaml"
+    path = get_project_templates_dir() / f"{name}.yaml"
     if path.exists():
         return path.read_text(encoding="utf-8")
     return None
 
 
+def get_project_template_path(name: str) -> Path:
+    """Get a project template path by name."""
+    return get_project_templates_dir() / f"{name}.yaml"
+
+
 def save_project_template(name: str, content: str):
     """Save a project template with the given name."""
     ensure_directories()
-    path = PROJECT_TEMPLATES_DIR / f"{name}.yaml"
+    path = get_project_templates_dir() / f"{name}.yaml"
     path.write_text(content, encoding="utf-8")
 
 
 def delete_project_template(name: str) -> bool:
     """Delete a project template by name. Returns True if deleted."""
-    path = PROJECT_TEMPLATES_DIR / f"{name}.yaml"
+    path = get_project_templates_dir() / f"{name}.yaml"
     if path.exists():
         path.unlink()
         return True
@@ -123,8 +163,9 @@ def delete_project_template(name: str) -> bool:
 
 def rename_project_template(old_name: str, new_name: str) -> bool:
     """Rename a project template. Returns True if renamed."""
-    old_path = PROJECT_TEMPLATES_DIR / f"{old_name}.yaml"
-    new_path = PROJECT_TEMPLATES_DIR / f"{new_name}.yaml"
+    base_dir = get_project_templates_dir()
+    old_path = base_dir / f"{old_name}.yaml"
+    new_path = base_dir / f"{new_name}.yaml"
     
     if not old_path.exists():
         return False
@@ -135,7 +176,7 @@ def rename_project_template(old_name: str, new_name: str) -> bool:
             if old_path.samefile(new_path):
                 # Case-only change: rename via temp file
                 import uuid
-                temp_path = PROJECT_TEMPLATES_DIR / f"_temp_{uuid.uuid4().hex}.yaml"
+                temp_path = base_dir / f"_temp_{uuid.uuid4().hex}.yaml"
                 old_path.rename(temp_path)
                 temp_path.rename(new_path)
                 return True
@@ -152,121 +193,161 @@ def rename_project_template(old_name: str, new_name: str) -> bool:
 
 # --- File Templates ---
 
+def _sanitize_template_name(name: str) -> Optional[Path]:
+    try:
+        path = Path(name.strip().replace("\\", "/"))
+    except Exception:
+        return None
+    if not path.name:
+        return None
+    if path.is_absolute():
+        return None
+    if ".." in path.parts:
+        return None
+    return path
+
+
+def _template_path_from_name(name: str) -> Optional[Path]:
+    path = _sanitize_template_name(name)
+    if not path:
+        return None
+    return get_file_templates_dir() / path
+
+
+def _iter_template_files() -> List[Path]:
+    base_dir = get_file_templates_dir()
+    if not base_dir.exists():
+        return []
+    files = []
+    for item in base_dir.rglob("*"):
+        if item.is_file():
+            rel = item.relative_to(base_dir)
+            if any(part.startswith(".") for part in rel.parts):
+                continue
+            files.append(item)
+    return files
+
+
+def _has_file_templates() -> bool:
+    return any(True for _ in _iter_template_files())
+
+
+def _migrate_file_templates():
+    if not FILE_TEMPLATES_PATH.exists():
+        return
+    if _has_file_templates():
+        return
+    try:
+        with open(FILE_TEMPLATES_PATH, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except Exception:
+        return
+    templates: Dict[str, str] = {}
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict) and "name" in item:
+                templates[item["name"]] = item.get("content", "")
+    elif isinstance(data, dict):
+        templates = data
+    if not templates:
+        return
+    save_file_templates(templates)
+    try:
+        backup_path = FILE_TEMPLATES_PATH.with_suffix(".yaml.bak")
+        if backup_path.exists():
+            backup_path.unlink()
+        FILE_TEMPLATES_PATH.rename(backup_path)
+    except OSError:
+        pass
+
 def load_file_templates() -> Dict[str, str]:
     """Load all file templates from disk, preserving order."""
     ensure_directories()
-    if FILE_TEMPLATES_PATH.exists():
+    templates = {}
+    for path in _iter_template_files():
         try:
-            with open(FILE_TEMPLATES_PATH, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f)
-                # Support both old dict format and new list format
-                if isinstance(data, list):
-                    # New format: list of {name, content} dicts
-                    result = {}
-                    for item in data:
-                        if isinstance(item, dict) and 'name' in item:
-                            result[item['name']] = item.get('content', '')
-                    return result
-                elif isinstance(data, dict):
-                    # Old format: dict of name -> content (order may not be preserved)
-                    return data
-                return {}
+            rel = path.relative_to(get_file_templates_dir()).as_posix()
+            templates[rel] = path.read_text(encoding="utf-8")
         except Exception:
-            return {}
-    return {}
+            continue
+    return templates
 
 
 def save_file_templates(templates: Dict[str, str]):
     """Save file templates from a name->content mapping."""
-    templates_list = [{'name': name, 'content': content} for name, content in templates.items()]
-    save_file_templates_list(templates_list)
+    ensure_directories()
+    for path in _iter_template_files():
+        try:
+            path.unlink()
+        except Exception:
+            pass
+    for name, content in templates.items():
+        save_file_template(name, content)
 
 
 def list_file_template_names() -> List[str]:
     """List file template names in order."""
     ensure_directories()
-    if FILE_TEMPLATES_PATH.exists():
-        try:
-            with open(FILE_TEMPLATES_PATH, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f)
-                if isinstance(data, list):
-                    return [item['name'] for item in data if isinstance(item, dict) and 'name' in item]
-                elif isinstance(data, dict):
-                    return list(data.keys())
-                return []
-        except Exception:
-            return []
-    return []
+    names = []
+    for path in _iter_template_files():
+        names.append(path.relative_to(get_file_templates_dir()).as_posix())
+    return sorted(names)
 
 
 def save_file_templates_list(templates: List[Dict]):
     """Save file templates as ordered list."""
-    ensure_directories()
-    with open(FILE_TEMPLATES_PATH, "w", encoding="utf-8") as f:
-        yaml.dump(templates, f, default_flow_style=False, allow_unicode=True)
+    templates_dict = {}
+    for item in templates:
+        if isinstance(item, dict) and "name" in item:
+            templates_dict[item["name"]] = item.get("content", "")
+    save_file_templates(templates_dict)
 
 
 def get_file_template(name: str) -> Optional[str]:
     """Get a single file template by name."""
-    templates = load_file_templates()
-    return templates.get(name)
+    path = _template_path_from_name(name)
+    if not path or not path.exists():
+        return None
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+
+
+def get_file_template_path(name: str) -> Optional[Path]:
+    """Get a file template path by name."""
+    path = _template_path_from_name(name)
+    if not path or not path.exists():
+        return None
+    return path
 
 
 def save_file_template(name: str, content: str):
     """Save or update a single file template. New templates are added at the end."""
     ensure_directories()
-    templates_list = []
-    found = False
-    
-    if FILE_TEMPLATES_PATH.exists():
-        try:
-            with open(FILE_TEMPLATES_PATH, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f)
-                if isinstance(data, list):
-                    templates_list = data
-                elif isinstance(data, dict):
-                    # Convert old format to new
-                    templates_list = [{'name': k, 'content': v} for k, v in data.items()]
-        except Exception:
-            pass
-    
-    # Update existing or mark as not found
-    for item in templates_list:
-        if isinstance(item, dict) and item.get('name') == name:
-            item['content'] = content
-            found = True
-            break
-    
-    # Append new template at the end
-    if not found:
-        templates_list.append({'name': name, 'content': content})
-    
-    save_file_templates_list(templates_list)
+    path = _template_path_from_name(name)
+    if not path:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
 
 
 def delete_file_template(name: str) -> bool:
     """Delete a file template by name. Returns True if deleted."""
     ensure_directories()
-    if not FILE_TEMPLATES_PATH.exists():
+    path = _template_path_from_name(name)
+    if not path or not path.exists():
         return False
-    
     try:
-        with open(FILE_TEMPLATES_PATH, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        
-        templates_list = []
-        if isinstance(data, list):
-            templates_list = data
-        elif isinstance(data, dict):
-            templates_list = [{'name': k, 'content': v} for k, v in data.items()]
-        
-        original_len = len(templates_list)
-        templates_list = [item for item in templates_list if not (isinstance(item, dict) and item.get('name') == name)]
-        
-        if len(templates_list) < original_len:
-            save_file_templates_list(templates_list)
-            return True
-        return False
+        path.unlink()
+        parent = path.parent
+        base_dir = get_file_templates_dir()
+        while parent != base_dir and parent.exists():
+            if any(parent.iterdir()):
+                break
+            parent.rmdir()
+            parent = parent.parent
+        return True
     except Exception:
         return False
 
@@ -314,7 +395,7 @@ def delete_custom_token(name: str) -> bool:
 
 def load_preferences() -> Dict:
     """Load user preferences from disk."""
-    ensure_directories()
+    _ensure_app_support_dir()
     if PREFERENCES_PATH.exists():
         try:
             with open(PREFERENCES_PATH, "r", encoding="utf-8") as f:
@@ -327,7 +408,7 @@ def load_preferences() -> Dict:
 
 def save_preferences(prefs: Dict):
     """Save user preferences to disk."""
-    ensure_directories()
+    _ensure_app_support_dir()
     with open(PREFERENCES_PATH, "w", encoding="utf-8") as f:
         yaml.dump(prefs, f, default_flow_style=False, allow_unicode=True)
 

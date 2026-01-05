@@ -4,11 +4,12 @@ Main application window and orchestration logic.
 
 import os
 import sys
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import (
     QAction, QDesktopServices, QKeySequence, QPainter, QPainterPath,
     QTextCursor
@@ -16,7 +17,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QFrame, QLabel, QPushButton, QFileDialog, QMessageBox, QStackedWidget,
-    QProgressBar
+    QProgressBar, QDialog
 )
 
 from ..styles import load_qss
@@ -26,13 +27,23 @@ from ..template_engine import (
     generate_project, DEFAULT_YAML
 )
 from .. import library
-from ..updater import UpdateChecker, UpdateDownloader, cleanup_updates
+from ..updater import (
+    UpdateChecker,
+    UpdateDownloader,
+    cleanup_updates,
+    get_app_path,
+    relaunch_app,
+)
 from .title_bar import TitleBar
 from .panels import (
     ProjectTemplatesPanel, FileTemplatesPanel, DetailsPanel, PreviewPanel,
     CustomTokensPanel, SegmentedControl
 )
 from .editors import CodeEditor
+from .update_dialog import UpdateDialog
+from .template_paths_dialog import TemplatePathsDialog
+from .unsaved_changes_dialog import UnsavedChangesDialog
+from .dialog_utils import style_default_dialog_button
 
 
 @dataclass
@@ -64,6 +75,8 @@ class MakeProjectWindow(QMainWindow):
         self._history = []
         self._history_index = 0
         self._history_suspended = False
+        self._update_dialog = None
+        self._force_quit = False
         self._project_template_drafts = {}
         self._yaml_history_last = ""
         self._yaml_history_pending = False
@@ -103,36 +116,44 @@ class MakeProjectWindow(QMainWindow):
         if sys.platform == "darwin":
             menubar.setNativeMenuBar(True)
 
-        file_menu = menubar.addMenu("File")
-
         new_action = QAction("New", self)
         new_action.setShortcut(QKeySequence.StandardKey.New)
+        new_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         new_action.triggered.connect(self._new_project)
-        file_menu.addAction(new_action)
+        self.addAction(new_action)
 
         open_action = QAction("Open...", self)
         open_action.setShortcut(QKeySequence.StandardKey.Open)
+        open_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         open_action.triggered.connect(self._open_project)
-        file_menu.addAction(open_action)
-
-        file_menu.addSeparator()
+        self.addAction(open_action)
 
         save_action = QAction("Save", self)
         save_action.setShortcut(QKeySequence.StandardKey.Save)
+        save_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         save_action.triggered.connect(self._save_current)
-        file_menu.addAction(save_action)
+        self.addAction(save_action)
 
         save_as_action = QAction("Save As...", self)
         save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
+        save_as_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         save_as_action.triggered.connect(self._save_project_as)
-        file_menu.addAction(save_as_action)
-
-        file_menu.addSeparator()
+        self.addAction(save_as_action)
 
         close_action = QAction("Close", self)
         close_action.setShortcut(QKeySequence.StandardKey.Close)
+        close_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         close_action.triggered.connect(self.close)
-        file_menu.addAction(close_action)
+        self.addAction(close_action)
+
+        template_paths_action = QAction("Template Locations...", self)
+        template_paths_action.setMenuRole(QAction.MenuRole.PreferencesRole)
+        template_paths_action.triggered.connect(self._configure_template_locations)
+
+        quit_action = QAction("Quit MakeProject", self)
+        quit_action.setShortcut(QKeySequence.StandardKey.Quit)
+        quit_action.setMenuRole(QAction.MenuRole.QuitRole)
+        quit_action.triggered.connect(self.close)
 
         edit_menu = menubar.addMenu("Edit")
 
@@ -151,6 +172,15 @@ class MakeProjectWindow(QMainWindow):
         edit_menu.addAction(self.redo_action)
 
         help_menu = menubar.addMenu("Help")
+
+        if sys.platform == "darwin":
+            help_menu.addAction(template_paths_action)
+            help_menu.addAction(quit_action)
+        else:
+            app_menu = menubar.addMenu("MakeProject")
+            app_menu.addAction(template_paths_action)
+            app_menu.addSeparator()
+            app_menu.addAction(quit_action)
 
         update_action = QAction("Check for Updates...", self)
         update_action.triggered.connect(lambda: self._check_for_updates(manual=True))
@@ -423,6 +453,7 @@ class MakeProjectWindow(QMainWindow):
             self._history_index -= 1
         finally:
             self._history_suspended = False
+        self._update_dialog = None
         self._update_edit_actions()
 
     def _redo(self):
@@ -437,6 +468,7 @@ class MakeProjectWindow(QMainWindow):
             self._history_index += 1
         finally:
             self._history_suspended = False
+        self._update_dialog = None
         self._update_edit_actions()
 
     def _on_project_template_renamed(self, old_name: str, new_name: str):
@@ -579,14 +611,157 @@ class MakeProjectWindow(QMainWindow):
 
     def _show_project_template_in_finder(self, name: str):
         """Reveal a project template file in the OS file manager."""
-        path = library.PROJECT_TEMPLATES_DIR / f"{name}.yaml"
+        path = library.get_project_template_path(name)
         if not path.exists():
-            QMessageBox.warning(self, "File Not Found", f"Could not find: {path.name}")
+            QMessageBox.warning(self, "File Not Found", f"Could not find: {name}.yaml")
             return
         if sys.platform == "darwin":
             os.system(f'open -R "{path}"')
         else:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
+
+    def _configure_template_locations(self):
+        project_path = library.get_project_templates_dir()
+        file_path = library.get_file_templates_dir()
+        dialog = TemplatePathsDialog(
+            project_path,
+            file_path,
+            library.DEFAULT_PROJECT_TEMPLATES_DIR,
+            library.DEFAULT_FILE_TEMPLATES_DIR,
+            self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        new_project_path = self._normalize_template_path(
+            dialog.project_path_text(),
+            library.DEFAULT_PROJECT_TEMPLATES_DIR,
+        )
+        new_file_path = self._normalize_template_path(
+            dialog.file_path_text(),
+            library.DEFAULT_FILE_TEMPLATES_DIR,
+        )
+
+        if not self._validate_template_path(new_project_path, "Project templates"):
+            return
+        if not self._validate_template_path(new_file_path, "File templates"):
+            return
+        if not self._ensure_template_dir(new_project_path, "Project templates"):
+            return
+        if not self._ensure_template_dir(new_file_path, "File templates"):
+            return
+
+        old_project_path = library.get_project_templates_dir()
+        old_file_path = library.get_file_templates_dir()
+
+        if (
+            old_project_path.resolve() == new_project_path.resolve()
+            and old_file_path.resolve() == new_file_path.resolve()
+        ):
+            return
+
+        if self._has_any_unsaved_changes():
+            decision = QMessageBox.question(
+                self,
+                "Save Changes",
+                "Save template changes before switching locations?",
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Cancel,
+            )
+            if decision != QMessageBox.StandardButton.Save:
+                return
+            self._save_all_changes()
+
+        if dialog.should_move_existing():
+            project_conflicts = self._move_template_directory(
+                old_project_path, new_project_path
+            )
+            file_conflicts = self._move_template_directory(
+                old_file_path, new_file_path
+            )
+            self._notify_template_move_conflicts(project_conflicts, file_conflicts)
+
+        library.set_template_paths(new_project_path, new_file_path)
+        library.ensure_directories()
+        library.set_preference("last_template", None)
+
+        self._project_template_drafts.clear()
+        self.project_templates_panel.clear_current_template()
+        self.file_templates_panel.clear_all_state()
+
+    def _normalize_template_path(self, raw_path: str, default_path: Path) -> Path:
+        if not raw_path:
+            return default_path
+        return Path(raw_path).expanduser().resolve()
+
+    def _validate_template_path(self, path: Path, label: str) -> bool:
+        if path.exists() and not path.is_dir():
+            QMessageBox.warning(
+                self,
+                "Invalid Folder",
+                f"{label} path is not a folder.\n\n{path}",
+            )
+            return False
+        return True
+
+    def _ensure_template_dir(self, path: Path, label: str) -> bool:
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            QMessageBox.warning(
+                self,
+                "Folder Unavailable",
+                f"Could not access the {label} folder.\n\n{path}",
+            )
+            return False
+        return True
+
+    def _move_template_directory(self, source: Path, destination: Path) -> list[str]:
+        if not source.exists():
+            return []
+        try:
+            if source.resolve() == destination.resolve():
+                return []
+        except Exception:
+            if source == destination:
+                return []
+
+        destination.mkdir(parents=True, exist_ok=True)
+        conflicts = []
+        for item in source.rglob("*"):
+            if not item.is_file():
+                continue
+            rel = item.relative_to(source)
+            if any(part.startswith(".") for part in rel.parts):
+                continue
+            target = destination / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                conflicts.append(rel.as_posix())
+                continue
+            shutil.move(str(item), str(target))
+
+        for root, dirs, files in os.walk(source, topdown=False):
+            if not dirs and not files:
+                try:
+                    Path(root).rmdir()
+                except OSError:
+                    pass
+        return conflicts
+
+    def _notify_template_move_conflicts(
+        self,
+        project_conflicts: list[str],
+        file_conflicts: list[str],
+    ):
+        total = len(project_conflicts) + len(file_conflicts)
+        if total == 0:
+            return
+        QMessageBox.warning(
+            self,
+            "Template Move Conflicts",
+            "Some templates were not moved because they already exist in the destination folder.",
+        )
 
     def _save_all_changes(self):
         """Persist all pending template edits to disk."""
@@ -610,27 +785,17 @@ class MakeProjectWindow(QMainWindow):
         return False
 
     def closeEvent(self, event):
+        if self._force_quit:
+            event.accept()
+            return
         if not self._has_any_unsaved_changes():
             event.accept()
             return
-        dialog = QMessageBox(self)
-        dialog.setIcon(QMessageBox.Icon.Warning)
-        dialog.setWindowTitle("Unsaved Changes")
-        dialog.setText("You have unsaved changes.")
-        dialog.setInformativeText("Do you want to save your changes before quitting?")
-        save_btn = dialog.addButton("Save All", QMessageBox.ButtonRole.AcceptRole)
-        discard_btn = dialog.addButton("Quit Without Saving", QMessageBox.ButtonRole.DestructiveRole)
-        cancel_btn = dialog.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        save_btn.setProperty("class", "keepButton")
-        discard_btn.setProperty("class", "dangerButton")
-        cancel_btn.setProperty("class", "cancelButton")
-        dialog.setDefaultButton(save_btn)
-        dialog.exec()
-        clicked = dialog.clickedButton()
-        if clicked == cancel_btn:
+        dialog = UnsavedChangesDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             event.ignore()
             return
-        if clicked == save_btn:
+        if dialog.choice == UnsavedChangesDialog.Choice.SAVE:
             self._save_all_changes()
         event.accept()
 
@@ -741,11 +906,15 @@ class MakeProjectWindow(QMainWindow):
     def _restore_last_template(self):
         """Restore the last opened project template at startup."""
         last_template = library.get_preference("last_template")
+        templates = library.list_project_templates()
         if last_template:
-            templates = library.list_project_templates()
             if last_template in templates:
                 self._load_project_template(last_template)
                 return
+        if templates:
+            self.project_templates_panel.clear_current_template()
+            self._clear_project_view()
+            return
         self._update_preview()
 
     def _load_project_template(self, name: str):
@@ -915,7 +1084,7 @@ class MakeProjectWindow(QMainWindow):
             cancel_btn = dialog.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
             overwrite_btn.setProperty("class", "dangerButton")
             overwrite_all_btn.setProperty("class", "dangerButton")
-            merge_btn.setProperty("class", "keepButton")
+            style_default_dialog_button(merge_btn)
             skip_btn.setProperty("class", "cancelButton")
             cancel_btn.setProperty("class", "cancelButton")
             dialog.setDefaultButton(merge_btn)
@@ -930,7 +1099,7 @@ class MakeProjectWindow(QMainWindow):
             cancel_btn = dialog.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
             overwrite_btn.setProperty("class", "dangerButton")
             overwrite_all_btn.setProperty("class", "dangerButton")
-            keep_btn.setProperty("class", "keepButton")
+            style_default_dialog_button(keep_btn)
             cancel_btn.setProperty("class", "cancelButton")
             dialog.setDefaultButton(keep_btn)
 
@@ -974,15 +1143,18 @@ class MakeProjectWindow(QMainWindow):
 
     def _on_update_available(self, version: str, url: str, manual: bool):
         """Handle the update-available flow."""
-        reply = QMessageBox.question(
-            self,
-            "Update Available",
-            f"A new version ({version}) is available. Download and install?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
+        if self._update_dialog:
+            self._update_dialog.close()
 
-        if reply == QMessageBox.StandardButton.Yes:
-            self._download_update(url)
+        self._update_dialog = UpdateDialog(version, self)
+        self._update_dialog.update_requested.connect(
+            lambda: self._download_update(url)
+        )
+        self._update_dialog.rejected.connect(self._on_update_dialog_closed)
+        self._update_dialog.open()
+
+    def _on_update_dialog_closed(self):
+        self._update_dialog = None
 
     def _on_no_update(self, manual: bool):
         """Handle a successful update check with no updates."""
@@ -1006,23 +1178,53 @@ class MakeProjectWindow(QMainWindow):
 
     def _download_update(self, url: str):
         """Download and install the update bundle."""
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(0)
+        dialog = self._update_dialog
+        if not dialog:
+            return
+
+        dialog.set_progress(0)
+        dialog.set_status("Downloading update...")
 
         self.update_downloader = UpdateDownloader(url)
-        self.update_downloader.progress.connect(self.progress_bar.setValue)
-        self.update_downloader.status.connect(self._show_status)
+        self.update_downloader.progress.connect(dialog.set_progress)
+        self.update_downloader.status.connect(dialog.set_status)
         self.update_downloader.finished.connect(self._on_update_finished)
         self.update_downloader.start()
 
     def _on_update_finished(self, success: bool, message: str):
         """Handle update completion."""
-        self.progress_bar.setVisible(False)
+        dialog = self._update_dialog
+        if not dialog:
+            return
 
         if success:
-            self._show_status("Update complete!")
+            dialog.mark_finished(True, "Update installed. Relaunching...")
+            self._relaunch_updated_app()
         else:
-            QMessageBox.warning(self, "Update Failed", message)
+            dialog.mark_finished(False, message)
+
+    def _relaunch_updated_app(self):
+        app_path = get_app_path()
+        if not app_path:
+            if self._update_dialog:
+                self._update_dialog.set_status(
+                    "Update installed. Please relaunch the app."
+                )
+            return
+
+        def relaunch_and_quit():
+            if relaunch_app(app_path):
+                self._force_quit = True
+                if self._update_dialog:
+                    self._update_dialog.close()
+                self.close()
+                QApplication.instance().quit()
+            elif self._update_dialog:
+                self._update_dialog.set_status(
+                    "Update installed. Please relaunch the app."
+                )
+
+        QTimer.singleShot(300, relaunch_and_quit)
 
     def paintEvent(self, event):
         """Paint rounded corners for frameless window."""

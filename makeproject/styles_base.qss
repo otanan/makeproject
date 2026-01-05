@@ -1,0 +1,366 @@
+/* MakeProject Base Styles - Structure & layout */
+QWidget#centralWidget {
+    border-radius: 12px;
+}
+
+/* === Title Bar === */
+QFrame#titleBar {
+    border-top-left-radius: 12px;
+    border-top-right-radius: 12px;
+    border-bottom-width: 1px;
+    border-bottom-style: solid;
+}
+
+QLabel#titleLabel {
+    font-size: 16px;
+    font-weight: 600;
+}
+
+QLabel#darkModeLabel {
+    font-size: 12px;
+}
+
+/* Window control buttons - macOS traffic light style */
+QPushButton#closeButton,
+QPushButton#maximizeButton,
+QPushButton#minimizeButton {
+    border: none;
+    border-radius: 6px;
+    min-width: 12px;
+    max-width: 12px;
+    min-height: 12px;
+    max-height: 12px;
+    margin: 0px;
+    padding: 0px;
+}
+
+QPushButton#closeButton {
+    background-color: #FF5F57;
+}
+
+QPushButton#closeButton:hover {
+    background-color: #FF4136;
+}
+
+QPushButton#maximizeButton {
+    background-color: #28CA42;
+}
+
+QPushButton#maximizeButton:hover {
+    background-color: #1DB83A;
+}
+
+QPushButton#minimizeButton {
+    background-color: #FFBD2E;
+}
+
+QPushButton#minimizeButton:hover {
+    background-color: #F5A623;
+}
+
+/* === Panels === */
+QFrame.panel {
+    border-width: 1px;
+    border-style: solid;
+    border-radius: 8px;
+}
+
+QLabel.panelHeader {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    padding: 4px 0;
+}
+
+/* === Text Editors === */
+QPlainTextEdit, QTextEdit {
+    border-width: 1px;
+    border-style: solid;
+    border-radius: 6px;
+    padding: 8px;
+}
+
+/* === Line Edit === */
+QLineEdit {
+    border-width: 1px;
+    border-style: solid;
+    border-radius: 6px;
+    padding: 6px 10px;
+}
+
+/* === Buttons === */
+QPushButton {
+    border-width: 1px;
+    border-style: solid;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-weight: 500;
+    min-width: 50px;
+}
+
+/* Primary button */
+QPushButton#primaryButton {
+    border: none;
+    font-weight: 600;
+    font-size: 15px;
+    padding: 8px 20px;
+    min-width: 160px;
+}
+
+/* Icon buttons (+ and - for templates) */
+QPushButton.iconButton {
+    border-width: 1px;
+    border-style: solid;
+    border-radius: 4px;
+    font-size: 16px;
+    font-weight: bold;
+    padding: 0px;
+}
+
+/* Add button (+ for new template) - matches delete button style */
+QPushButton.addButton, QPushButton.deleteButton {
+    border: none;
+    border-radius: 5px;
+    font-size: 18px;
+    font-weight: bold;
+    padding: 0px;
+    margin: 0px;
+}
+
+/* Inline edit field for template names */
+QLineEdit.inlineEdit {
+    background-color: transparent;
+    border: none;
+    border-bottom-width: 1px;
+    border-bottom-style: solid;
+    border-radius: 0px;
+    padding: 2px 4px;
+}
+
+/* === Lists === */
+QListWidget {
+    border-width: 1px;
+    border-style: solid;
+    border-radius: 6px;
+    outline: none;
+}
+
+QListWidget::item {
+    padding-top: 0px;
+    padding-right: 0px;
+    padding-bottom: 0px;
+    padding-left: 10px;
+    border-radius: 0px;
+}
+
+QListWidget::item:disabled {
+    background-color: transparent;
+    padding: 0px;
+}
+
+/* === Tree Widget === */
+QTreeWidget {
+    border-width: 1px;
+    border-style: solid;
+    border-radius: 6px;
+    outline: none;
+}
+
+QTreeWidget::item {
+    padding: 3px 4px;
+    background-color: transparent;
+}
+
+QTreeWidget::branch {
+    background-color: transparent;
+}
+
+/* === Table Widget === */
+QTableWidget {
+    border-width: 1px;
+    border-style: solid;
+    border-radius: 6px;
+    outline: none;
+}
+
+QTableWidget::item {
+    padding: 4px 8px;
+}
+
+QHeaderView::section {
+    border: none;
+    border-bottom-width: 1px;
+    border-bottom-style: solid;
+    padding: 6px 8px;
+    font-weight: 600;
+}
+
+QTableCornerButton::section {
+    border: none;
+    border-bottom-width: 1px;
+    border-bottom-style: solid;
+    border-right-width: 1px;
+    border-right-style: solid;
+}
+
+QTableWidget QScrollBar:vertical {
+    margin-top: 28px;
+}
+
+/* === Dialogs === */
+QMessageBox, QDialog {
+    border-width: 1px;
+    border-style: solid;
+    border-radius: 8px;
+}
+
+QMessageBox QPushButton {
+    min-width: 110px;
+    padding: 6px 12px;
+    border-radius: 6px;
+}
+
+QPushButton.defaultDialogButton,
+QMessageBox QPushButton.dangerButton {
+    border: none;
+    font-weight: 600;
+}
+
+QMessageBox QPushButton.cancelButton {
+    border-width: 1px;
+    border-style: solid;
+}
+
+/* === Tab Buttons (Segmented Control) === */
+QFrame#segmentedControl {
+    border-radius: 6px;
+    padding: 2px;
+}
+
+QPushButton.segmentButton {
+    border: none;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-weight: 500;
+}
+
+/* === Scroll Bars === */
+QScrollBar:vertical {
+    width: 10px;
+    border-radius: 5px;
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+    border-radius: 5px;
+    min-height: 30px;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0;
+}
+
+QScrollBar:horizontal {
+    height: 10px;
+    border-radius: 5px;
+    margin: 0;
+}
+
+QScrollBar::handle:horizontal {
+    border-radius: 5px;
+    min-width: 30px;
+}
+
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    width: 0;
+}
+
+/* === Splitter === */
+QSplitter::handle {
+    background-color: transparent;
+}
+
+QSplitter::handle:horizontal {
+    width: 6px;
+}
+
+QSplitter::handle:vertical {
+    height: 6px;
+}
+
+/* Disable hover for non-resizable splitter handles */
+QSplitter::handle:disabled {
+    background-color: transparent;
+}
+
+QSplitter::handle:disabled:hover {
+    background-color: transparent;
+}
+
+/* === Progress Bar === */
+QProgressBar {
+    border: none;
+    border-radius: 4px;
+    height: 6px;
+    text-align: center;
+}
+
+QProgressBar::chunk {
+    border-radius: 4px;
+}
+
+/* === Menu Bar === */
+QMenuBar {
+    background-color: transparent;
+}
+
+QMenuBar::item {
+    background-color: transparent;
+    padding: 4px 8px;
+}
+
+QMenuBar::item:selected {
+    border-radius: 4px;
+}
+
+QMenu {
+    border-width: 1px;
+    border-style: solid;
+    border-radius: 8px;
+    padding: 4px;
+}
+
+QMenu::item {
+    padding: 6px 24px;
+    border-radius: 4px;
+}
+
+QMenu::separator {
+    height: 1px;
+    margin: 4px 8px;
+}
+
+/* === Tooltips === */
+QToolTip {
+    border: none;
+    padding: 3px 6px;
+}
+
+/* === Specific Panel Styling === */
+QFrame#projectTemplatesPanel,
+QFrame#projectYamlPanel,
+QFrame#fileTemplatesPanel,
+QFrame#detailsPanel,
+QFrame#previewPanel {
+    border-width: 1px;
+    border-style: solid;
+    border-radius: 8px;
+}
+
+/* === Labels === */
+QLabel.reference {
+    font-size: 11px;
+}

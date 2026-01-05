@@ -47,12 +47,18 @@ def get_resource_path(relative_path: str) -> Path:
 @lru_cache(maxsize=2)
 def load_qss(theme: str = "dark") -> str:
     """Load the QSS stylesheet for the given theme."""
-    filename = f"styles_{theme}.qss"
-    qss_path = get_resource_path(filename)
-    
-    if qss_path.exists():
-        return qss_path.read_text(encoding="utf-8")
-    
+    base_path = get_resource_path("styles_base.qss")
+    theme_path = get_resource_path(f"styles_{theme}.qss")
+
+    parts = []
+    if base_path.exists():
+        parts.append(base_path.read_text(encoding="utf-8"))
+    if theme_path.exists():
+        parts.append(theme_path.read_text(encoding="utf-8"))
+
+    if parts:
+        return "\n\n".join(parts)
+
     # Fallback to empty stylesheet
     return ""
 
@@ -88,4 +94,3 @@ def get_ui_font(size: int = 13) -> QFont:
     font = QFont(font_name)
     font.setPointSize(size)
     return font
-

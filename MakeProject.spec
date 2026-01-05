@@ -1,11 +1,22 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import re
+from pathlib import Path
+
+version_text = (Path("makeproject") / "__init__.py").read_text(encoding="utf-8")
+match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', version_text)
+app_version = match.group(1) if match else "0.0.0"
+
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('makeproject/styles_dark.qss', 'makeproject'), ('makeproject/styles_light.qss', 'makeproject')],
+    datas=[
+        ('makeproject/styles_base.qss', 'makeproject'),
+        ('makeproject/styles_dark.qss', 'makeproject'),
+        ('makeproject/styles_light.qss', 'makeproject'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -32,7 +43,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['icon.png'],
+    icon=['assets/icon.icns'],
 )
 coll = COLLECT(
     exe,
@@ -46,6 +57,10 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='MakeProject.app',
-    icon='icon.png',
+    icon='assets/icon.icns',
     bundle_identifier=None,
+    info_plist={
+        "CFBundleShortVersionString": app_version,
+        "CFBundleVersion": app_version,
+    },
 )

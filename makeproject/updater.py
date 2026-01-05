@@ -6,7 +6,6 @@ Checks for updates, downloads release assets, and replaces the app bundle.
 import os
 import sys
 import shutil
-import zipfile
 import tempfile
 import subprocess
 from pathlib import Path
@@ -87,14 +86,11 @@ class UpdateDownloader(QThread):
             self.status.emit("Extracting update...")
             self.progress.emit(60)
             
-            # Extract the zip
+            # Extract the zip with ditto to preserve symlinks inside the app bundle.
             extract_path = UPDATES_DIR / "extracted"
             if extract_path.exists():
                 shutil.rmtree(extract_path)
-            extract_path.mkdir(parents=True)
-            
-            with zipfile.ZipFile(zip_path, 'r') as zf:
-                zf.extractall(extract_path)
+            extract_zip_with_ditto(zip_path, extract_path)
             
             self.progress.emit(80)
             
@@ -113,8 +109,6 @@ class UpdateDownloader(QThread):
                 if success:
                     self.progress.emit(100)
                     self.status.emit("Update installed. Relaunching...")
-                    # Trigger relaunch
-                    relaunch_app(app_path)
                 self.finished.emit(success, message)
             else:
                 self.finished.emit(False, "Could not determine app location.")
@@ -210,6 +204,21 @@ def find_app_in_directory(directory: Path) -> Optional[Path]:
     return None
 
 
+def extract_zip_with_ditto(zip_path: Path, extract_path: Path) -> None:
+    """Extract a zip file using ditto so symlinks are preserved."""
+    extract_path.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            ["ditto", "-x", "-k", str(zip_path), str(extract_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.strip() if exc.stderr else "Unknown error"
+        raise RuntimeError(f"Failed to extract update: {stderr}") from exc
+
+
 def replace_app(old_app: Path, new_app: Path) -> Tuple[bool, str]:
     """Replace the old app with the new one."""
     try:
@@ -237,15 +246,14 @@ def replace_app(old_app: Path, new_app: Path) -> Tuple[bool, str]:
         return False, f"Failed to replace app: {str(e)}"
 
 
-def relaunch_app(app_path: Path):
+def relaunch_app(app_path: Path) -> bool:
     """Relaunch the application."""
     try:
         # Use open command on macOS
-        subprocess.Popen(['open', '-n', str(app_path)])
-        # Exit current instance
-        sys.exit(0)
+        subprocess.Popen(['open', '-n', str(app_path)], start_new_session=True)
+        return True
     except Exception:
-        pass  # Failed to relaunch, user can do it manually
+        return False  # Failed to relaunch, user can do it manually
 
 
 def cleanup_updates():
@@ -259,4 +267,3 @@ def cleanup_updates():
                     shutil.rmtree(item)
     except Exception:
         pass  # Cleanup failures are non-critical
-

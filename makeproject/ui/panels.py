@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 from ..styles import get_code_font
 from .. import library
 from .editors import CodeEditor
+from .dialog_utils import style_default_dialog_button
 from .template_items import TemplateListItem, AddTemplateButton
 
 
@@ -129,6 +130,7 @@ class ProjectTemplatesPanel(QFrame):
         self._draft_store = draft_store if draft_store is not None else {}
         self._editing_new = False
         self._renaming_template = None
+        self._draft_name_seed = ""
         self._refreshing = False
         self._refresh_pending = False
         self._click_timer = QTimer()
@@ -215,6 +217,8 @@ class ProjectTemplatesPanel(QFrame):
             )
             widget.name_edited.connect(self._on_new_name_confirmed)
             widget.name_canceled.connect(self._on_new_name_canceled)
+            if self._draft_name_seed:
+                widget.name_edit.setText(self._draft_name_seed)
             item.setSizeHint(widget.sizeHint())
             self.template_list.addItem(item)
             self.template_list.setItemWidget(item, widget)
@@ -227,6 +231,7 @@ class ProjectTemplatesPanel(QFrame):
                 allow_delete=False,
             )
             widget.set_unsaved(True)
+            widget.rename_requested.connect(self._start_draft_naming)
             item.setSizeHint(widget.sizeHint())
             self.template_list.addItem(item)
             self.template_list.setItemWidget(item, widget)
@@ -274,9 +279,12 @@ class ProjectTemplatesPanel(QFrame):
                         widget = self.template_list.itemWidget(current)
                         if isinstance(widget, TemplateListItem) and not widget._editable:
                             name = widget.get_name()
-                            if name and widget._allow_delete:
-                                self._renaming_template = name
-                                self.refresh_list()
+                            if name:
+                                if widget._allow_delete:
+                                    self._renaming_template = name
+                                    self.refresh_list()
+                                elif self._current_template is None and self._has_unsaved_changes:
+                                    self._start_draft_naming(name)
                                 return True
         return super().eventFilter(obj, event)
 
@@ -372,9 +380,12 @@ class ProjectTemplatesPanel(QFrame):
         widget = self.template_list.itemWidget(item)
         if isinstance(widget, TemplateListItem) and not widget._editable:
             name = widget.get_name()
-            if name and widget._allow_delete:
-                self._renaming_template = name
-                self.refresh_list()
+            if name:
+                if widget._allow_delete:
+                    self._renaming_template = name
+                    self.refresh_list()
+                elif self._current_template is None and self._has_unsaved_changes:
+                    self._start_draft_naming(name)
 
     def _create_new_template(self):
         """Start creating a new template with inline name editing."""
@@ -383,11 +394,13 @@ class ProjectTemplatesPanel(QFrame):
         self._original_content = ""
         self._editing_new = True
         self._renaming_template = None
+        self._draft_name_seed = ""
         self.new_template_requested.emit()
         self.refresh_list()
 
     def _on_new_name_confirmed(self, old_name: str, new_name: str):
         """Finalize a new template name entry."""
+        self._draft_name_seed = ""
         name = new_name.strip()
         if name == "untitled project":
             name = self.get_unique_template_name(name)
@@ -404,16 +417,40 @@ class ProjectTemplatesPanel(QFrame):
         self.save_requested.emit()
 
     def _on_new_name_canceled(self, old_name: str):
+        self._draft_name_seed = ""
         self._editing_new = False
+        self.refresh_list()
+
+    def _start_draft_naming(self, name: str):
+        """Start naming an unsaved draft without clearing its content."""
+        self._editing_new = True
+        self._renaming_template = None
+        self._draft_name_seed = name
         self.refresh_list()
 
     def _on_rename_confirmed(self, old_name: str, new_name: str):
         self._renaming_template = None
-        if old_name != new_name and new_name:
-            library.rename_project_template(old_name, new_name)
-            if self._current_template == old_name:
-                self._current_template = new_name
-            self.template_renamed.emit(old_name, new_name)
+        name = new_name.strip()
+        if not name or old_name == name:
+            self.refresh_list()
+            return
+
+        old_path = library.get_project_template_path(old_name)
+        if old_path.exists():
+            if library.rename_project_template(old_name, name):
+                if self._current_template == old_name:
+                    self._current_template = name
+                if old_name in self._draft_store:
+                    self._draft_store[name] = self._draft_store.pop(old_name)
+                self.template_renamed.emit(old_name, name)
+            self.refresh_list()
+            return
+
+        if old_name in self._draft_store:
+            self._draft_store[name] = self._draft_store.pop(old_name)
+        self._current_template = name
+        self._has_unsaved_changes = True
+        self.save_requested.emit()
         self.refresh_list()
 
     def _on_rename_canceled(self, old_name: str):
@@ -446,7 +483,7 @@ class ProjectTemplatesPanel(QFrame):
         keep_btn = dialog.addButton("Keep Both", QMessageBox.ButtonRole.AcceptRole)
         cancel_btn = dialog.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
         overwrite_btn.setProperty("class", "dangerButton")
-        keep_btn.setProperty("class", "keepButton")
+        style_default_dialog_button(keep_btn)
         cancel_btn.setProperty("class", "cancelButton")
         dialog.setDefaultButton(keep_btn)
         dialog.exec()
@@ -685,7 +722,7 @@ class PreviewPanel(QFrame):
         self.content_view = QTextEdit()
         self.content_view.setReadOnly(True)
         self.content_view.setFont(get_code_font())
-        self.content_view.setPlaceholderText("Select a file to preview its contents.")
+        self.content_view.setPlaceholderText("Empty file.")
         layout.addWidget(self.content_view, 1)
 
         self._file_contents = {}
@@ -859,15 +896,24 @@ class PreviewPanel(QFrame):
         return self.tree.itemAbove(item)
 
     def _update_content_for_item(self, item):
+        """ Updates the Preview panel with the content for the active item. """
         if item is None:
             return
         is_folder = item.data(0, Qt.ItemDataRole.UserRole + 1)
         path = item.data(0, Qt.ItemDataRole.UserRole)
 
+        self.content_view.clear()
+
         if is_folder:
-            self.content_view.setPlainText("Select a file to preview its contents.")
+            self.content_view.setPlaceholderText("Select a file to preview its contents.")
+            return
+        
+        # Get the file contents and show the preview.
+        content = self._file_contents.get(path, "")
+        if content == "":
+            # Remove plain text that might appear.
+            self.content_view.setPlaceholderText("Empty file.")
         else:
-            content = self._file_contents.get(path, "")
             self.content_view.setPlainText(content)
 
     def _on_item_clicked(self, item: QTreeWidgetItem):
@@ -977,7 +1023,7 @@ class FileTemplatesPanel(QFrame):
 
         self.editor = CodeEditor(
             indent_size=4,
-            placeholder="Template content (supports {mp:Token} syntax)...",
+            placeholder="Template content\nSupports {mp:Token} syntax...",
         )
         self.editor.textChanged.connect(self._track_unsaved_changes)
         right_layout.addWidget(self.editor, 1)
@@ -1181,7 +1227,7 @@ class FileTemplatesPanel(QFrame):
         elif action == duplicate_action:
             self._duplicate_template(name)
         elif action == show_action:
-            self._show_in_finder()
+            self._show_in_finder(name)
         elif action == delete_action:
             self._delete_template(name)
 
@@ -1208,15 +1254,23 @@ class FileTemplatesPanel(QFrame):
         self.reference_label.setText(f"Reference: template: {new_name}")
         self.refresh_list()
 
-    def _show_in_finder(self):
-        path = library.FILE_TEMPLATES_PATH
+    def _show_in_finder(self, name: str):
+        path = None
+        if name:
+            path = library.get_file_template_path(name)
+        if not path:
+            path = library.get_file_templates_dir()
         if not path.exists():
-            QMessageBox.warning(self, "File Not Found", f"Could not find: {path.name}")
+            QMessageBox.warning(self, "File Not Found", "Could not find file templates.")
             return
         if sys.platform == "darwin":
-            subprocess.run(["open", "-R", str(path)])
+            if path.is_file():
+                subprocess.run(["open", "-R", str(path)])
+            else:
+                subprocess.run(["open", str(path)])
         else:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
+            target = path.parent if path.is_file() else path
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
 
     def _on_item_clicked(self, item: QListWidgetItem):
         widget = self.template_list.itemWidget(item)
@@ -1346,7 +1400,7 @@ class FileTemplatesPanel(QFrame):
         keep_btn = dialog.addButton("Keep Both", QMessageBox.ButtonRole.AcceptRole)
         cancel_btn = dialog.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
         overwrite_btn.setProperty("class", "dangerButton")
-        keep_btn.setProperty("class", "keepButton")
+        style_default_dialog_button(keep_btn)
         cancel_btn.setProperty("class", "cancelButton")
         dialog.setDefaultButton(keep_btn)
         dialog.exec()
@@ -1401,6 +1455,19 @@ class FileTemplatesPanel(QFrame):
         self._current_template = None
         self._has_unsaved_changes = False
         self._original_content = ""
+        self.editor.clear()
+        self._reset_editor_scroll()
+        self.reference_label.setText("Reference: template: <name>")
+        self.refresh_list()
+
+    def clear_all_state(self):
+        """Clear all file template state and drafts."""
+        self._drafts.clear()
+        self._current_template = None
+        self._has_unsaved_changes = False
+        self._original_content = ""
+        self._editing_new = False
+        self._renaming_template = None
         self.editor.clear()
         self._reset_editor_scroll()
         self.reference_label.setText("Reference: template: <name>")

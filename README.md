@@ -1,93 +1,171 @@
-<!-- Filename:      README.md -->
-<!-- Author:        Jonathan Delgado -->
-<!-- Description:   GitHub README -->
+# MakeProject
 
-<!-- Header -->
-<h2 align="center">MakeProject</h2>
-  <p align="center">
-    Project template generator using structure definitions provided as .yaml files. Copies existing templates and populates content with provided information.
-    <br />
-    <br />
-    Status: <em>in progress</em>
-    <!-- Notion Roadmap link -->
-    ·<a href="https://otanan.notion.site/Makeproject-937308a8242249a8addcad8210ad45d1"><strong>
-        Notion Roadmap »
-    </strong></a>
-  </p>
-</div>
+MakeProject is a macOS desktop app for building project folders from YAML templates and reusable file templates. It is designed for fast iteration: define a structure once, then generate complete projects with tokens and content templates.
 
+## Features
 
-<!-- Project Demo -->
-https://user-images.githubusercontent.com/6320907/232583543-fdc9dc64-0dec-4ff7-bf5d-168ef3cbf85e.mov
+- Project templates stored as YAML files.
+- File templates stored as real files you can edit with any text editor.
+- Token substitution across YAML and file templates.
+- Custom tokens managed in-app.
+- Optional Python blocks inside YAML for dynamic generation.
+- Preview tree before generation.
+- Conflict handling when generating into existing folders.
+- Automatic update checks and in-app updater.
+- Theme toggle.
+- Configurable template storage locations.
 
+## Install (macOS)
 
+1. Download the latest `MakeProject.zip` from the Releases page.
+2. Unzip and move `MakeProject.app` to `~/Applications` for automatic updates.
+3. Launch the app.
 
-<!-- ## Table of contents
-* [Contact](#contact)
-* [Acknowledgments](#acknowledgments) -->
+If the app is in a protected location, the updater will prompt you to move it to `~/Applications`.
 
+## Quick Start
 
-<!-- ## Installation
+1. Open the app.
+2. In the Project Templates panel, create a new template.
+3. Edit the YAML in the Project YAML panel.
+4. Add or edit file templates in the File Templates panel.
+5. Click Generate Project and choose an output folder.
 
-This is an example of how you may give instructions on setting up your project locally.
-To get a local copy up and running follow these simple example steps.
+## Project Templates (YAML)
 
-1. First step
-2. Clone the repo
-   ```sh
-   git clone https://github.com/github_username/repo_name.git
-   ```
-3. Import the package
-   ```python
-   import ytlink
-   ```
+Project templates are YAML files that describe the folder structure and file contents to generate.
 
+### Explicit syntax
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p> -->
+```yaml
+- file: README.md
+  content: |
+    # {mp:title}
 
-## Usage
-### Creating Project Structures
-A project structure is a .yaml file whose contents reflect the layout of the directory as well as any files whose contents will be generated from a template, e.g.
- ```yaml
-# Generate quizzes to assess students.
-- assessments:
+    {mp:description}
 
-  - $teaching-preamble.sty: teaching.sty
-
-  - quiz_01:
-    - $teaching-quiz.tex: quiz_01.tex
-
-  - quiz_02:
-    - $teaching-quiz.tex: quiz_02.tex
-
-  - quiz_03:
-    - $teaching-quiz.tex: quiz_03.tex
+- folder: src
+  contents:
+    - file: main.py
+      template: main.py
+    - folder: tests
 ```
-The top-level comment will be used as a description when choosing project structures.
 
-The `$` key indicates that this file's contents comes from a template. It will search the templates folder for the template `quiz.tex` in the `teaching` folder (indicated by the `-` separator as belonging to the `teaching` folder. It will populate the contents and rename the file to `quiz_01.tex` etc.
+### Implicit folder syntax
 
+```yaml
+- "Teaching - {mp:title}":
+  - Quizzes.md
+  - file: lesson-plan.md
+    content: |
+      # Lesson Plan
+      {mp:description}
+  - folder: resources
+```
 
+### Include another project template
 
+```yaml
+- project_template: base-web-app
+```
 
-### Generating Projects
-Type `makeproject` into the terminal to run the script. Choose from existing project structures to generate the project.
+### Python-driven items
 
+```yaml
+- python: |
+    result = [
+      {"file": f"Quiz {i}.tex", "content": f"\\\\section*{{Quiz {i}}}\\n"}
+      for i in range(3)
+    ]
+```
 
+Notes:
+- Tokens are case-insensitive: `{mp:title}` and `{MP:Title}` are equivalent.
+- For tokenized folder names in implicit syntax, use quotes: `"{mp:title}"`.
+- The Python block must return or print a list of items in the same format as the YAML list.
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+## File Templates
 
-## Roadmap
+File templates are real files stored on disk. You can edit them in any text editor.
 
-Refer to the [Notion Roadmap] for future features and the state of the project.
+Default location:
 
+```
+~/Library/Application Support/MakeProject/file_templates
+```
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+Each file template can be referenced by path in YAML. For example, if you have:
 
-## Contact
-Created by [Jonathan Delgado](https://jdelgado.net/).
+```
+file_templates/
+  main.py
+  teaching/
+    quiz.tex
+```
 
+Use them like this:
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+```yaml
+- file: main.py
+  template: main.py
+- file: quiz_01.tex
+  template: teaching/quiz.tex
+```
 
-[Notion Roadmap]: https://otanan.notion.site/Makeproject-937308a8242249a8addcad8210ad45d1
+### Example file template
+
+```python
+#!/usr/bin/env python3
+"""
+{mp:title} - {mp:description}
+"""
+
+def main():
+    print("Hello from {mp:title}!")
+
+if __name__ == "__main__":
+    main()
+```
+
+## Tokens
+
+Tokens are written as `{mp:name}` and replaced during generation.
+
+Built-in tokens:
+
+- `title` (Project title)
+- `description` (Project description)
+
+Custom tokens:
+
+Use the Custom Tokens panel to add your own (for example, `email`), then reference them with `{mp:email}`.
+
+Python tokens:
+
+Use `{mp.py: expression}` for a single expression, or `{mp.py| ... }` for a code block. The expression result is inserted as text. The block should return or print a value.
+
+## Generating Projects
+
+1. Click Generate Project.
+2. Choose an output folder.
+3. Resolve conflicts when prompted:
+   - Overwrite, Merge, Keep Both, Skip, or Cancel depending on the conflict.
+
+The app shows a progress bar while generating.
+
+## Template Locations
+
+You can change where project templates and file templates are stored:
+
+- Open "Preferences..." in the MakeProject menu on macOS.
+- Choose new folders and optionally move existing templates.
+
+Default locations:
+
+```
+Project templates:
+~/Library/Application Support/MakeProject/project_templates
+
+File templates:
+~/Library/Application Support/MakeProject/file_templates
+```
