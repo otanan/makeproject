@@ -623,11 +623,14 @@ class MakeProjectWindow(QMainWindow):
     def _configure_template_locations(self):
         project_path = library.get_project_templates_dir()
         file_path = library.get_file_templates_dir()
+        custom_tokens_path = library.get_custom_tokens_path()
         dialog = TemplatePathsDialog(
             project_path,
             file_path,
+            custom_tokens_path,
             library.DEFAULT_PROJECT_TEMPLATES_DIR,
             library.DEFAULT_FILE_TEMPLATES_DIR,
+            library.CUSTOM_TOKENS_PATH,
             self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -641,22 +644,34 @@ class MakeProjectWindow(QMainWindow):
             dialog.file_path_text(),
             library.DEFAULT_FILE_TEMPLATES_DIR,
         )
+        new_custom_tokens_path = self._normalize_custom_tokens_path(
+            dialog.custom_tokens_path_text(),
+            library.CUSTOM_TOKENS_PATH,
+        )
 
         if not self._validate_template_path(new_project_path, "Project templates"):
             return
         if not self._validate_template_path(new_file_path, "File templates"):
             return
+        if not self._validate_custom_tokens_path(
+            new_custom_tokens_path, "Custom tokens"
+        ):
+            return
         if not self._ensure_template_dir(new_project_path, "Project templates"):
             return
         if not self._ensure_template_dir(new_file_path, "File templates"):
             return
+        if not self._ensure_custom_tokens_parent(new_custom_tokens_path, "Custom tokens"):
+            return
 
         old_project_path = library.get_project_templates_dir()
         old_file_path = library.get_file_templates_dir()
+        old_custom_tokens_path = library.get_custom_tokens_path()
 
         if (
             old_project_path.resolve() == new_project_path.resolve()
             and old_file_path.resolve() == new_file_path.resolve()
+            and old_custom_tokens_path.resolve() == new_custom_tokens_path.resolve()
         ):
             return
 
@@ -679,17 +694,33 @@ class MakeProjectWindow(QMainWindow):
             file_conflicts = self._move_template_directory(
                 old_file_path, new_file_path
             )
-            self._notify_template_move_conflicts(project_conflicts, file_conflicts)
+            tokens_conflict = self._move_custom_tokens_file(
+                old_custom_tokens_path, new_custom_tokens_path
+            )
+            self._notify_template_move_conflicts(
+                project_conflicts, file_conflicts, tokens_conflict
+            )
 
         library.set_template_paths(new_project_path, new_file_path)
+        library.set_custom_tokens_path(new_custom_tokens_path)
         library.ensure_directories()
         library.set_preference("last_template", None)
 
         self._project_template_drafts.clear()
         self.project_templates_panel.clear_current_template()
         self.file_templates_panel.clear_all_state()
+        self.custom_tokens_panel.refresh_table()
+        if self.custom_tokens_panel.has_tokens():
+            self.custom_tokens_panel.table.selectRow(0)
 
     def _normalize_template_path(self, raw_path: str, default_path: Path) -> Path:
+        if not raw_path:
+            return default_path
+        return Path(raw_path).expanduser().resolve()
+
+    def _normalize_custom_tokens_path(
+        self, raw_path: str, default_path: Path
+    ) -> Path:
         if not raw_path:
             return default_path
         return Path(raw_path).expanduser().resolve()
@@ -704,6 +735,16 @@ class MakeProjectWindow(QMainWindow):
             return False
         return True
 
+    def _validate_custom_tokens_path(self, path: Path, label: str) -> bool:
+        if path.exists() and path.is_dir():
+            QMessageBox.warning(
+                self,
+                "Invalid File",
+                f"{label} path must be a file.\n\n{path}",
+            )
+            return False
+        return True
+
     def _ensure_template_dir(self, path: Path, label: str) -> bool:
         try:
             path.mkdir(parents=True, exist_ok=True)
@@ -712,6 +753,18 @@ class MakeProjectWindow(QMainWindow):
                 self,
                 "Folder Unavailable",
                 f"Could not access the {label} folder.\n\n{path}",
+            )
+            return False
+        return True
+
+    def _ensure_custom_tokens_parent(self, path: Path, label: str) -> bool:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            QMessageBox.warning(
+                self,
+                "Folder Unavailable",
+                f"Could not access the {label} folder.\n\n{path.parent}",
             )
             return False
         return True
@@ -749,18 +802,48 @@ class MakeProjectWindow(QMainWindow):
                     pass
         return conflicts
 
+    def _move_custom_tokens_file(self, source: Path, destination: Path) -> bool:
+        if not source.exists():
+            return False
+        try:
+            if source.resolve() == destination.resolve():
+                return False
+        except Exception:
+            if source == destination:
+                return False
+        if destination.exists():
+            return True
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(source), str(destination))
+        except OSError:
+            return True
+        return False
+
     def _notify_template_move_conflicts(
         self,
         project_conflicts: list[str],
         file_conflicts: list[str],
+        tokens_conflict: bool = False,
     ):
         total = len(project_conflicts) + len(file_conflicts)
+        if tokens_conflict:
+            total += 1
         if total == 0:
             return
+        messages = []
+        if project_conflicts or file_conflicts:
+            messages.append(
+                "Some templates were not moved because they already exist in the destination folder."
+            )
+        if tokens_conflict:
+            messages.append(
+                "The custom tokens file was not moved because it already exists at the destination."
+            )
         QMessageBox.warning(
             self,
             "Template Move Conflicts",
-            "Some templates were not moved because they already exist in the destination folder.",
+            "\n\n".join(messages),
         )
 
     def _save_all_changes(self):

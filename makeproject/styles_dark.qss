@@ -38,6 +38,15 @@ QLabel.panelHeader {
     color: #A6ADC8;
 }
 
+/* === Checkboxes === */
+QCheckBox {
+    color: #CDD6F4;
+}
+
+QCheckBox:disabled {
+    color: #6C7086;
+}
+
 /* === Text Editors === */
 QPlainTextEdit, QTextEdit {
     background-color: #1E1E2E;
@@ -247,6 +256,18 @@ QTableWidget::item:selected:!active {
 QHeaderView::section {
     background-color: #313244;
     color: #A6ADC8;
+    border-bottom-color: #45475A;
+}
+
+QHeaderView:vertical {
+    background-color: #313244;
+    color: #A6ADC8;
+}
+
+QHeaderView::section:vertical {
+    background-color: #313244;
+    color: #A6ADC8;
+    border-right-color: #45475A;
     border-bottom-color: #45475A;
 }
 

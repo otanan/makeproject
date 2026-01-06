@@ -959,6 +959,21 @@ class PreviewPanel(QFrame):
         self.tree.update()
 
 
+class CustomTokensTable(QTableWidget):
+    """Table widget that clears selection when clicking empty space."""
+
+    def __init__(self, clear_callback, parent=None):
+        super().__init__(parent)
+        self._clear_callback = clear_callback
+
+    def mousePressEvent(self, event):
+        if self.itemAt(event.pos()) is None:
+            if self._clear_callback:
+                self._clear_callback()
+            return
+        super().mousePressEvent(event)
+
+
 class FileTemplatesPanel(QFrame):
     """Bottom center panel: file templates list and editor."""
 
@@ -1559,12 +1574,12 @@ class CustomTokensPanel(QFrame):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        header = QLabel("CUSTOM TOKENS")
-        header.setProperty("class", "panelHeader")
-        header.setToolTip("Global tokens available across all projects")
-        layout.addWidget(header)
+        self._header_label = QLabel("CUSTOM TOKENS")
+        self._header_label.setProperty("class", "panelHeader")
+        self._header_label.setToolTip("Global tokens available across all projects")
+        layout.addWidget(self._header_label)
 
-        self.table = QTableWidget()
+        self.table = CustomTokensTable(self._clear_token_selection)
         self.table.setColumnCount(2)
         self.table.setHorizontalHeaderLabels(["Token Name", "Value"])
         self.table.setCornerButtonEnabled(False)
@@ -1575,6 +1590,9 @@ class CustomTokensPanel(QFrame):
         self.table.horizontalHeader().setSortIndicatorShown(True)
         self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
         self.table.installEventFilter(self)
+        self.table.horizontalHeader().installEventFilter(self)
+        self.table.verticalHeader().installEventFilter(self)
+        self._header_label.installEventFilter(self)
         layout.addWidget(self.table, 1)
 
         input_layout = QHBoxLayout()
@@ -1652,6 +1670,15 @@ class CustomTokensPanel(QFrame):
             value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, 1, value_item)
 
+    def _clear_token_selection(self):
+        if not hasattr(self, "table") or self.table is None:
+            return
+        if self.table.currentRow() >= 0 or self.table.selectedItems():
+            self.table.clearSelection()
+            self.table.setCurrentIndex(QModelIndex())
+        self.name_input.clear()
+        self.value_input.clear()
+
     def _on_selection_changed(self):
         current_row = self.table.currentRow()
         if current_row >= 0:
@@ -1660,6 +1687,9 @@ class CustomTokensPanel(QFrame):
             if name_item and value_item:
                 self.name_input.setText(name_item.text())
                 self.value_input.setText(value_item.text())
+                return
+        self.name_input.clear()
+        self.value_input.clear()
 
     def _add_token(self):
         name = self.name_input.text().strip()
@@ -1670,8 +1700,7 @@ class CustomTokensPanel(QFrame):
         old_value = existing.get(name)
         library.update_custom_token(name, value)
         self.refresh_table()
-        self.name_input.clear()
-        self.value_input.clear()
+        self._select_token_by_name(name, value)
         self.tokens_changed.emit()
         action = "update" if old_value is not None else "add"
         self.token_action.emit(action, name, old_value or "", value)
@@ -1689,6 +1718,20 @@ class CustomTokensPanel(QFrame):
                 self.tokens_changed.emit()
                 if old_value is not None:
                     self.token_action.emit("delete", name, old_value, "")
+                if self.table.currentRow() < 0:
+                    self.name_input.clear()
+                    self.value_input.clear()
+
+    def _select_token_by_name(self, name: str, value: str):
+        if not self.table:
+            return
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item and item.text() == name:
+                self.table.selectRow(row)
+                self.name_input.setText(name)
+                self.value_input.setText(value)
+                return
 
     def _on_header_clicked(self, index: int):
         if index not in (0, 1):
@@ -1706,11 +1749,28 @@ class CustomTokensPanel(QFrame):
 
     def eventFilter(self, obj, event):
         from PyQt6.QtCore import QEvent
+        if not hasattr(self, "table") or self.table is None:
+            return super().eventFilter(obj, event)
         if obj == self.table and event.type() == QEvent.Type.KeyPress:
             if event.key() in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete):
                 self._remove_token()
                 return True
+        if event.type() == QEvent.Type.MouseButtonPress:
+            if obj in (
+                self._header_label,
+                self.table.horizontalHeader(),
+                self.table.verticalHeader(),
+            ):
+                self._clear_token_selection()
         return super().eventFilter(obj, event)
+
+    def mousePressEvent(self, event):
+        self._clear_token_selection()
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._clear_token_selection()
+        super().mouseReleaseEvent(event)
 
 
 class SegmentedControl(QFrame):

@@ -16,6 +16,8 @@ FILE_TEMPLATES_PATH = APP_SUPPORT_DIR / "file_templates.yaml"
 CUSTOM_TOKENS_PATH = APP_SUPPORT_DIR / "custom_tokens.yaml"
 PREFERENCES_PATH = APP_SUPPORT_DIR / "preferences.yaml"
 UPDATES_DIR = APP_SUPPORT_DIR / "updates"
+APP_OPENED_PREF_KEY = "app_opened"
+CUSTOM_TOKENS_PREF_KEY = "custom_tokens_path"
 
 # Default file templates seeded on first run (use actual file extensions)
 DEFAULT_FILE_TEMPLATES = {
@@ -64,18 +66,42 @@ def ensure_directories():
     get_file_templates_dir().mkdir(parents=True, exist_ok=True)
 
 
+def _has_app_opened() -> bool:
+    """Return True if the app appears to have been opened before."""
+    if PREFERENCES_PATH.exists():
+        return True
+    if CUSTOM_TOKENS_PATH.exists():
+        return True
+    if FILE_TEMPLATES_PATH.exists():
+        return True
+    project_dir = get_project_templates_dir()
+    if project_dir.exists() and any(project_dir.glob("*.yaml")):
+        return True
+    return False
+
+
+def _mark_app_opened():
+    """Persist the app-opened flag for future launches."""
+    prefs = load_preferences()
+    if prefs.get(APP_OPENED_PREF_KEY) is True:
+        return
+    prefs[APP_OPENED_PREF_KEY] = True
+    save_preferences(prefs)
+
+
 def seed_defaults():
-    """Seed default file templates on first run."""
+    """Seed default file templates on first app launch."""
     ensure_directories()
     _migrate_file_templates()
-    if not _has_file_templates():
+    if not _has_file_templates() and not _has_app_opened():
         save_file_templates(DEFAULT_FILE_TEMPLATES)
 
 
 def seed_custom_tokens():
     """Seed default custom tokens on first run, ensure required defaults exist."""
     ensure_directories()
-    if not CUSTOM_TOKENS_PATH.exists():
+    tokens_path = get_custom_tokens_path()
+    if not tokens_path.exists():
         save_custom_tokens(DEFAULT_CUSTOM_TOKENS)
         return
     tokens = load_custom_tokens()
@@ -89,6 +115,7 @@ def initialize():
     ensure_directories()
     seed_defaults()
     seed_custom_tokens()
+    _mark_app_opened()
 
 
 def get_project_templates_dir() -> Path:
@@ -107,6 +134,22 @@ def get_file_templates_dir() -> Path:
     if isinstance(path_value, str) and path_value.strip():
         return Path(path_value).expanduser()
     return DEFAULT_FILE_TEMPLATES_DIR
+
+
+def get_custom_tokens_path() -> Path:
+    """Return the custom tokens file path, honoring user preferences."""
+    prefs = load_preferences()
+    path_value = prefs.get(CUSTOM_TOKENS_PREF_KEY)
+    if isinstance(path_value, str) and path_value.strip():
+        return Path(path_value).expanduser()
+    return CUSTOM_TOKENS_PATH
+
+
+def set_custom_tokens_path(custom_tokens_path: Path):
+    """Persist the custom tokens storage location."""
+    prefs = load_preferences()
+    prefs[CUSTOM_TOKENS_PREF_KEY] = str(custom_tokens_path)
+    save_preferences(prefs)
 
 
 def set_template_paths(project_templates_dir: Path, file_templates_dir: Path):
@@ -357,9 +400,10 @@ def delete_file_template(name: str) -> bool:
 def load_custom_tokens() -> Dict[str, str]:
     """Load custom tokens from disk."""
     ensure_directories()
-    if CUSTOM_TOKENS_PATH.exists():
+    path = get_custom_tokens_path()
+    if path.exists():
         try:
-            with open(CUSTOM_TOKENS_PATH, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
                 return data if isinstance(data, dict) else {}
         except Exception:
@@ -370,7 +414,9 @@ def load_custom_tokens() -> Dict[str, str]:
 def save_custom_tokens(tokens: Dict[str, str]):
     """Save custom tokens to disk."""
     ensure_directories()
-    with open(CUSTOM_TOKENS_PATH, "w", encoding="utf-8") as f:
+    path = get_custom_tokens_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
         yaml.dump(tokens, f, default_flow_style=False, allow_unicode=True)
 
 
