@@ -1,3 +1,4 @@
+.DS_Store
 __pycache__
 .pyinstaller
 .tmp
@@ -5,6 +6,7 @@ __pycache__
 build
 dist
 icon.iconset
+icon.png
 
 # Built .app file
 MakeProject.zip
