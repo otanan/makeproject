@@ -490,7 +490,8 @@ def generate_project(
 
 
 # Default YAML template for new projects
-DEFAULT_YAML = '''# Each item is either a file or a folder in the project.
+DEFAULT_YAML = '''# Example project template.
+# Each item is either a file or a folder in the project.
 # Tokens use {mp:token} and are case-insensitive.
 #
 # Explicit syntax:

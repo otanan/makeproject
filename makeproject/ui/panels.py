@@ -198,6 +198,9 @@ class ProjectTemplatesPanel(QFrame):
                     name,
                     allow_delete=True,
                 )
+                tooltip = self._get_template_tooltip(name)
+                if tooltip:
+                    widget.setToolTip(tooltip)
                 widget.rename_requested.connect(self._start_rename_template)
                 widget.delete_clicked.connect(self._delete_template)
                 if name in unsaved_names:
@@ -254,6 +257,18 @@ class ProjectTemplatesPanel(QFrame):
         if self._refresh_pending:
             self._refresh_pending = False
             QTimer.singleShot(0, self.refresh_list)
+
+    def _get_template_tooltip(self, name: str) -> str | None:
+        content = library.load_project_template(name)
+        if not content:
+            return None
+        lines = content.splitlines()
+        if not lines:
+            return None
+        first_line = lines[0].strip()
+        if not first_line.startswith("#"):
+            return None
+        return first_line
 
     def eventFilter(self, obj, event):
         """Handle keyboard events for template list."""
@@ -515,7 +530,7 @@ class ProjectTemplatesPanel(QFrame):
                     self.template_delete_requested.emit(name)
                     library.delete_project_template(name)
                     if name == self._current_template:
-                        self._current_template = prev_name or None
+                        self._current_template = None
                         self._has_unsaved_changes = False
                         self._original_content = ""
                         if prev_name:
@@ -532,7 +547,7 @@ class ProjectTemplatesPanel(QFrame):
         self.template_delete_requested.emit(name)
         library.delete_project_template(name)
         if name == self._current_template:
-            self._current_template = prev_name or None
+            self._current_template = None
             self._has_unsaved_changes = False
             self._original_content = ""
             if prev_name:
