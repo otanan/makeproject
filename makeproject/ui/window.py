@@ -6,6 +6,7 @@ import os
 import sys
 import re
 import shutil
+import base64
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -89,6 +90,7 @@ class MakeProjectWindow(QMainWindow):
         self._setup_window()
         self._setup_menu()
         self._setup_ui()
+        self._restore_splitter_states()
         self._setup_signals()
         self._apply_theme()
         self._reset_yaml_history()
@@ -206,6 +208,7 @@ class MakeProjectWindow(QMainWindow):
         content_layout.setSpacing(12)
 
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._main_splitter = main_splitter
 
         self.project_templates_panel = ProjectTemplatesPanel(
             draft_store=self._project_template_drafts
@@ -216,6 +219,7 @@ class MakeProjectWindow(QMainWindow):
         main_splitter.setCollapsible(0, False)
 
         center_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._center_splitter = center_splitter
 
         yaml_panel = QFrame()
         yaml_panel.setObjectName("projectYamlPanel")
@@ -298,6 +302,57 @@ class MakeProjectWindow(QMainWindow):
 
         content_layout.addWidget(main_splitter)
         main_layout.addWidget(content)
+
+    def _restore_splitter_state(self, splitter: QSplitter, state_b64: str | None):
+        if not splitter or not state_b64:
+            return
+        try:
+            state = base64.b64decode(state_b64.encode("ascii"))
+        except (ValueError, UnicodeDecodeError):
+            return
+        splitter.restoreState(state)
+
+    def _restore_splitter_states(self):
+        prefs = library.load_preferences()
+        self._restore_splitter_state(
+            self._main_splitter,
+            prefs.get("splitter_main"),
+        )
+        self._restore_splitter_state(
+            self._center_splitter,
+            prefs.get("splitter_center"),
+        )
+        self._restore_splitter_state(
+            self.preview_panel.splitter,
+            prefs.get("splitter_preview"),
+        )
+        self._restore_splitter_state(
+            self.file_templates_panel.splitter,
+            prefs.get("splitter_file_templates"),
+        )
+        self._restore_splitter_state(
+            self.custom_tokens_panel.splitter,
+            prefs.get("splitter_custom_tokens"),
+        )
+
+    def _save_splitter_states(self):
+        prefs = library.load_preferences()
+        prefs["splitter_main"] = base64.b64encode(
+            self._main_splitter.saveState()
+        ).decode("ascii")
+        prefs["splitter_center"] = base64.b64encode(
+            self._center_splitter.saveState()
+        ).decode("ascii")
+        prefs["splitter_preview"] = base64.b64encode(
+            self.preview_panel.splitter.saveState()
+        ).decode("ascii")
+        prefs["splitter_file_templates"] = base64.b64encode(
+            self.file_templates_panel.splitter.saveState()
+        ).decode("ascii")
+        prefs["splitter_custom_tokens"] = base64.b64encode(
+            self.custom_tokens_panel.splitter.saveState()
+        ).decode("ascii")
+        library.save_preferences(prefs)
 
     def _setup_signals(self):
         """Connect signals between components."""
@@ -887,9 +942,11 @@ class MakeProjectWindow(QMainWindow):
 
     def closeEvent(self, event):
         if self._force_quit:
+            self._save_splitter_states()
             event.accept()
             return
         if not self._has_any_unsaved_changes():
+            self._save_splitter_states()
             event.accept()
             return
         dialog = UnsavedChangesDialog(self)
@@ -898,6 +955,7 @@ class MakeProjectWindow(QMainWindow):
             return
         if dialog.choice == UnsavedChangesDialog.Choice.SAVE:
             self._save_all_changes()
+        self._save_splitter_states()
         event.accept()
 
     def _show_status(self, message: str, duration=3000):

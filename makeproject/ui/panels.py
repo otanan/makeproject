@@ -705,6 +705,9 @@ class PreviewPanel(QFrame):
 
         layout.addLayout(header_layout)
 
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        self.splitter = splitter
+
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
         self.tree.itemClicked.connect(self._on_item_clicked)
@@ -718,13 +721,20 @@ class PreviewPanel(QFrame):
         self._dark_mode = True
         self._apply_disclosure_icons()
 
-        layout.addWidget(self.tree, 1)
+        splitter.addWidget(self.tree)
 
         self.content_view = QTextEdit()
         self.content_view.setReadOnly(True)
         self.content_view.setFont(get_code_font())
         self.content_view.setPlaceholderText("Empty file.")
-        layout.addWidget(self.content_view, 1)
+        line_height = self.content_view.fontMetrics().height()
+        self.content_view.setMinimumHeight((line_height * 3) + 16)
+        splitter.addWidget(self.content_view)
+        splitter.setCollapsible(0, False)
+        splitter.setCollapsible(1, False)
+        splitter.setSizes([260, 200])
+
+        layout.addWidget(splitter, 1)
 
         self._file_contents = {}
         self._expansion_states = {}
@@ -998,6 +1008,7 @@ class FileTemplatesPanel(QFrame):
         main_layout.addWidget(header)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter = splitter
 
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
@@ -1580,6 +1591,7 @@ class CustomTokensPanel(QFrame):
         layout.addWidget(self._header_label)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter = splitter
 
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
