@@ -166,6 +166,12 @@ QLineEdit.inlineEdit {
     color: #1A1A2E;
 }
 
+QLabel.tokenBadge {
+    background-color: rgba(13, 148, 136, 0.16);
+    color: #0D9488;
+    border: 1px solid rgba(13, 148, 136, 0.4);
+}
+
 /* === Lists === */
 QListWidget {
     background-color: #FFFFFF;

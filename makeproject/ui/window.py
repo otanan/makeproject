@@ -4,6 +4,7 @@ Main application window and orchestration logic.
 
 import os
 import sys
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,7 +25,7 @@ from ..styles import load_qss
 from ..highlighter import YAMLHighlighter
 from ..template_engine import (
     parse_yaml, build_token_context, build_file_tree,
-    generate_project, DEFAULT_YAML
+    generate_project, DEFAULT_YAML, YAMLParseError
 )
 from .. import library
 from ..updater import (
@@ -341,6 +342,7 @@ class MakeProjectWindow(QMainWindow):
 
         self.yaml_editor.set_dark_mode(self._dark_mode)
         self.file_templates_panel.editor.set_dark_mode(self._dark_mode)
+        self.custom_tokens_panel.set_dark_mode(self._dark_mode)
         self.preview_panel.set_dark_mode(self._dark_mode)
 
     def _toggle_dark_mode(self, checked: bool):
@@ -366,6 +368,13 @@ class MakeProjectWindow(QMainWindow):
             and self.file_templates_panel.isAncestorOf(focus_widget)
         ):
             self.file_templates_panel.save_current_template()
+            return
+        if (
+            self.bottom_stack.currentWidget() == self.custom_tokens_panel
+            and focus_widget is not None
+            and self.custom_tokens_panel.isAncestorOf(focus_widget)
+        ):
+            self.custom_tokens_panel.save_current_token()
             return
         self._save_project()
 
@@ -570,44 +579,50 @@ class MakeProjectWindow(QMainWindow):
         else:
             self.file_templates_panel.refresh_list()
 
-    def _on_custom_token_action(self, action: str, name: str, old_value: str, new_value: str):
+    def _on_custom_token_action(self, action: str, name: str, old_token: dict, new_token: dict):
         if self._history_suspended:
             return
         self._commit_yaml_history_entry()
         if action == "add":
             self._push_history_action(HistoryAction(
                 undo=lambda n=name: self._apply_custom_token_delete(n),
-                redo=lambda n=name, v=new_value: self._apply_custom_token_set(n, v),
+                redo=lambda n=name, t=new_token: self._apply_custom_token_set(n, t),
                 label="Add Token"
             ))
         elif action == "update":
             self._push_history_action(HistoryAction(
-                undo=lambda n=name, v=old_value: self._apply_custom_token_set(n, v),
-                redo=lambda n=name, v=new_value: self._apply_custom_token_set(n, v),
+                undo=lambda n=name, t=old_token: self._apply_custom_token_set(n, t),
+                redo=lambda n=name, t=new_token: self._apply_custom_token_set(n, t),
                 label="Update Token"
             ))
         elif action == "delete":
             self._push_history_action(HistoryAction(
-                undo=lambda n=name, v=old_value: self._apply_custom_token_set(n, v),
+                undo=lambda n=name, t=old_token: self._apply_custom_token_set(n, t),
                 redo=lambda n=name: self._apply_custom_token_delete(n),
                 label="Delete Token"
             ))
 
-    def _apply_custom_token_set(self, name: str, value: str):
+    def _apply_custom_token_set(self, name: str, token: dict):
         """Apply a token add/update without recording history."""
-        library.update_custom_token(name, value)
-        self.custom_tokens_panel.refresh_table()
+        if not token:
+            return
+        library.update_custom_token(
+            name,
+            token.get("value", ""),
+            token.get("type", "text"),
+        )
+        self.custom_tokens_panel.refresh_list()
         self.custom_tokens_panel.tokens_changed.emit()
         if self.custom_tokens_panel.has_tokens():
-            self.custom_tokens_panel.table.selectRow(0)
+            self.custom_tokens_panel.select_first_token()
 
     def _apply_custom_token_delete(self, name: str):
         """Apply a token delete without recording history."""
         library.delete_custom_token(name)
-        self.custom_tokens_panel.refresh_table()
+        self.custom_tokens_panel.refresh_list()
         self.custom_tokens_panel.tokens_changed.emit()
         if self.custom_tokens_panel.has_tokens():
-            self.custom_tokens_panel.table.selectRow(0)
+            self.custom_tokens_panel.select_first_token()
 
     def _show_project_template_in_finder(self, name: str):
         """Reveal a project template file in the OS file manager."""
@@ -709,9 +724,9 @@ class MakeProjectWindow(QMainWindow):
         self._project_template_drafts.clear()
         self.project_templates_panel.clear_current_template()
         self.file_templates_panel.clear_all_state()
-        self.custom_tokens_panel.refresh_table()
+        self.custom_tokens_panel.clear_all_state()
         if self.custom_tokens_panel.has_tokens():
-            self.custom_tokens_panel.table.selectRow(0)
+            self.custom_tokens_panel.select_first_token()
 
     def _normalize_template_path(self, raw_path: str, default_path: Path) -> Path:
         if not raw_path:
@@ -856,12 +871,15 @@ class MakeProjectWindow(QMainWindow):
                 self.project_templates_panel.mark_saved(name, content)
             self._project_template_drafts.pop(name, None)
         self.file_templates_panel.save_all_unsaved()
+        self.custom_tokens_panel.save_all_unsaved()
 
     def _has_any_unsaved_changes(self) -> bool:
         """Return True when any panel has unsaved edits."""
         if self.project_templates_panel.has_unsaved_changes():
             return True
         if self.file_templates_panel.has_unsaved_changes():
+            return True
+        if self.custom_tokens_panel.has_unsaved_changes():
             return True
         if self._project_template_drafts:
             return True
@@ -1059,6 +1077,51 @@ class MakeProjectWindow(QMainWindow):
             self._preview_timer.stop()
         self._preview_timer.start(250)
 
+    def _extract_error_line(self, message: str) -> int | None:
+        match = re.search(r'line\s+(\d+)', message, re.IGNORECASE)
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                return None
+        return None
+
+    def _find_token_line(self, yaml_text: str, token_name: str) -> int | None:
+        if not token_name:
+            return None
+        token_re = re.compile(
+            r'\{[mM][pP]\s*:\s*[^}]*\b' + re.escape(token_name) + r'\b',
+            re.IGNORECASE,
+        )
+        alt_re = re.compile(
+            r'\bmp\s*:\s*' + re.escape(token_name) + r'\b',
+            re.IGNORECASE,
+        )
+        for index, line in enumerate(yaml_text.splitlines(), start=1):
+            if token_re.search(line) or alt_re.search(line):
+                return index
+        return None
+
+    def _describe_yaml_error(self, exc: Exception, yaml_text: str) -> tuple[str, int | None]:
+        if isinstance(exc, YAMLParseError):
+            message = exc.message
+            line = exc.line
+        else:
+            message = str(exc)
+            line = None
+
+        if line is None:
+            line = self._extract_error_line(message)
+
+        if line is None:
+            token_match = re.search(r'Unknown token "([^"]+)"', message)
+            if token_match:
+                token_name = token_match.group(1)
+                line = self._find_token_line(yaml_text, token_name)
+                if line:
+                    message = f'Unknown token "{token_name}" on line {line}.'
+        return message, line
+
     def _update_preview(self):
         """Refresh the preview panel based on YAML and details."""
         yaml_text = self.yaml_editor.toPlainText()
@@ -1067,6 +1130,7 @@ class MakeProjectWindow(QMainWindow):
 
         data, error = parse_yaml(yaml_text)
         if error:
+            self.yaml_editor.set_error_line(self._extract_error_line(error))
             self.preview_panel.update_tree(self._last_valid_tree, error)
             return
 
@@ -1074,8 +1138,11 @@ class MakeProjectWindow(QMainWindow):
         try:
             tree = build_file_tree(data, context)
         except Exception as exc:
-            self.preview_panel.update_tree(self._last_valid_tree, str(exc))
+            message, line = self._describe_yaml_error(exc, yaml_text)
+            self.yaml_editor.set_error_line(line)
+            self.preview_panel.update_tree(self._last_valid_tree, message)
             return
+        self.yaml_editor.set_error_line(None)
         if tree:
             self._last_valid_tree = tree
         self.preview_panel.update_tree(tree)
@@ -1085,6 +1152,7 @@ class MakeProjectWindow(QMainWindow):
         yaml_text = self.yaml_editor.toPlainText()
         data, error = parse_yaml(yaml_text)
         if error:
+            self.yaml_editor.set_error_line(self._extract_error_line(error))
             QMessageBox.warning(self, "Invalid YAML", error)
             return
 
@@ -1105,7 +1173,9 @@ class MakeProjectWindow(QMainWindow):
         try:
             tree = build_file_tree(data, context)
         except Exception as exc:
-            QMessageBox.warning(self, "Invalid Template", str(exc))
+            message, line = self._describe_yaml_error(exc, yaml_text)
+            self.yaml_editor.set_error_line(line)
+            QMessageBox.warning(self, "Invalid Template", message)
             return
         if not tree:
             QMessageBox.warning(self, "No Files", "No files defined in the YAML.")

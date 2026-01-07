@@ -104,10 +104,6 @@ def seed_custom_tokens():
     if not tokens_path.exists():
         save_custom_tokens(DEFAULT_CUSTOM_TOKENS)
         return
-    tokens = load_custom_tokens()
-    if "email" not in tokens:
-        tokens["email"] = DEFAULT_CUSTOM_TOKENS["email"]
-        save_custom_tokens(tokens)
 
 
 def initialize():
@@ -397,7 +393,29 @@ def delete_file_template(name: str) -> bool:
 
 # --- Custom Tokens ---
 
-def load_custom_tokens() -> Dict[str, str]:
+def _normalize_custom_token(value) -> Dict[str, str]:
+    if isinstance(value, dict):
+        if "type" in value and "value" in value:
+            token_type = value.get("type", "text")
+            if isinstance(token_type, str):
+                token_type = token_type.lower()
+            else:
+                token_type = "text"
+            token_value = value.get("value", "")
+            return {
+                "type": "python" if token_type == "python" else "text",
+                "value": "" if token_value is None else str(token_value),
+            }
+        if "python" in value:
+            token_value = value.get("python", "")
+            return {
+                "type": "python",
+                "value": "" if token_value is None else str(token_value),
+            }
+    return {"type": "text", "value": "" if value is None else str(value)}
+
+
+def load_custom_tokens() -> Dict[str, Dict[str, str]]:
     """Load custom tokens from disk."""
     ensure_directories()
     path = get_custom_tokens_path()
@@ -405,25 +423,52 @@ def load_custom_tokens() -> Dict[str, str]:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
-                return data if isinstance(data, dict) else {}
+                if not isinstance(data, dict):
+                    return {}
+                tokens = {}
+                for name, value in data.items():
+                    tokens[str(name)] = _normalize_custom_token(value)
+                return tokens
         except Exception:
             return {}
     return {}
 
 
-def save_custom_tokens(tokens: Dict[str, str]):
+def save_custom_tokens(tokens: Dict[str, Dict[str, str]]):
     """Save custom tokens to disk."""
     ensure_directories()
     path = get_custom_tokens_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
-        yaml.dump(tokens, f, default_flow_style=False, allow_unicode=True)
+        serialized = {}
+        for name, token in tokens.items():
+            if not isinstance(token, dict):
+                serialized[name] = "" if token is None else str(token)
+                continue
+            token_type = token.get("type", "text")
+            if isinstance(token_type, str):
+                token_type = token_type.lower()
+            else:
+                token_type = "text"
+            token_value = token.get("value", "")
+            if token_type == "python":
+                serialized[name] = {
+                    "type": "python",
+                    "value": "" if token_value is None else str(token_value),
+                }
+            else:
+                serialized[name] = "" if token_value is None else str(token_value)
+        yaml.dump(serialized, f, default_flow_style=False, allow_unicode=True)
 
 
-def update_custom_token(name: str, value: str):
+def update_custom_token(name: str, value: str, token_type: str = "text"):
     """Add or update a custom token."""
     tokens = load_custom_tokens()
-    tokens[name] = value
+    token_type = token_type.lower() if isinstance(token_type, str) else "text"
+    tokens[name] = {
+        "type": "python" if token_type == "python" else "text",
+        "value": value,
+    }
     save_custom_tokens(tokens)
 
 

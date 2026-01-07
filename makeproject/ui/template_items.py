@@ -104,6 +104,8 @@ class TemplateListItem(QWidget):
         delete_tooltip: str = "Delete template",
         allow_delete: bool = True,
         delete_square: bool = False,
+        badge_text: str = "",
+        badge_tooltip: str = "",
         parent=None,
     ):
         super().__init__(parent)
@@ -144,6 +146,13 @@ class TemplateListItem(QWidget):
             )
             layout.addWidget(self.name_label)
             self.name_edit = None
+
+        self.badge_label = QLabel(badge_text or "")
+        self.badge_label.setProperty("class", "tokenBadge")
+        if badge_tooltip:
+            self.badge_label.setToolTip(badge_tooltip)
+        self.badge_label.setVisible(bool(badge_text) and not editable)
+        layout.addWidget(self.badge_label)
 
         self.delete_btn = QPushButton("−")
         if delete_square:

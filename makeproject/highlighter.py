@@ -96,9 +96,6 @@ class YAMLHighlighter(QSyntaxHighlighter):
         # Document markers: --- or ...
         self.rules.append((re.compile(r'^(---|\.\.\.)\s*$'), 'document'))
         
-        # Comments: # ...
-        self.rules.append((re.compile(r'#.*$'), 'comment'))
-        
         # file/folder/contents/template keys (special highlighting)
         self.rules.append((re.compile(r'^\s*-?\s*(file|folder|contents|content|template|project_template)\s*:'), 'file_folder_key'))
         
@@ -116,6 +113,25 @@ class YAMLHighlighter(QSyntaxHighlighter):
         
         # MakeProject tokens {mp:...} and {mp.py:...}
         self.rules.append((re.compile(r'\{mp(?:\.py)?\s*:[^}]+\}', re.IGNORECASE), 'token'))
+
+    def _comment_start(self, text):
+        """Return the index of a comment start outside quotes, if any."""
+        in_single = False
+        in_double = False
+        i = 0
+        while i < len(text):
+            ch = text[i]
+            if ch == '\\' and in_double:
+                i += 2
+                continue
+            if ch == '"' and not in_single:
+                in_double = not in_double
+            elif ch == "'" and not in_double:
+                in_single = not in_single
+            elif ch == '#' and not in_single and not in_double:
+                return i
+            i += 1
+        return None
     
     def set_dark_mode(self, dark_mode):
         """Update the color scheme for dark/light mode."""
@@ -125,6 +141,7 @@ class YAMLHighlighter(QSyntaxHighlighter):
     
     def highlightBlock(self, text):
         """Apply syntax highlighting to a block of text."""
+        comment_start = self._comment_start(text)
         # Special handling for file: and folder: values (file/folder names)
         file_folder_match = re.match(r'^(\s*-?\s*)(file|folder)(\s*:\s*)(.+)$', text)
         if file_folder_match:
@@ -154,9 +171,8 @@ class YAMLHighlighter(QSyntaxHighlighter):
                 self.setFormat(value_start + match.start(), match.end() - match.start(), self.formats['token'])
             
             # Still apply comment highlighting if there's a comment
-            comment_match = re.search(r'#.*$', text)
-            if comment_match:
-                self.setFormat(comment_match.start(), len(comment_match.group()), self.formats['comment'])
+            if comment_start is not None:
+                self.setFormat(comment_start, len(text) - comment_start, self.formats['comment'])
             return
 
         # Implicit folder syntax: - name:
@@ -181,9 +197,8 @@ class YAMLHighlighter(QSyntaxHighlighter):
                     self.setFormat(prefix_len + match.start(),
                                   match.end() - match.start(),
                                   self.formats['token'])
-                comment_match = re.search(r'#.*$', text)
-                if comment_match:
-                    self.setFormat(comment_match.start(), len(comment_match.group()), self.formats['comment'])
+                if comment_start is not None:
+                    self.setFormat(comment_start, len(text) - comment_start, self.formats['comment'])
                 return
 
         # Implicit file syntax: - filename
@@ -203,9 +218,8 @@ class YAMLHighlighter(QSyntaxHighlighter):
                         self.setFormat(prefix_len + match.start(),
                                       match.end() - match.start(),
                                       self.formats['token'])
-                    comment_match = re.search(r'#.*$', text)
-                    if comment_match:
-                        self.setFormat(comment_match.start(), len(comment_match.group()), self.formats['comment'])
+                    if comment_start is not None:
+                        self.setFormat(comment_start, len(text) - comment_start, self.formats['comment'])
                     return
         
         # Apply standard rules
@@ -235,3 +249,87 @@ class YAMLHighlighter(QSyntaxHighlighter):
             else:
                 for match in pattern.finditer(text):
                     self.setFormat(match.start(), match.end() - match.start(), self.formats[format_name])
+        if comment_start is not None:
+            self.setFormat(comment_start, len(text) - comment_start, self.formats['comment'])
+
+
+class PythonHighlighter(QSyntaxHighlighter):
+    """Syntax highlighter for Python code blocks."""
+
+    def __init__(self, parent=None, dark_mode=True):
+        super().__init__(parent)
+        self.dark_mode = dark_mode
+        self._setup_formats()
+        self._setup_rules()
+
+    def _setup_formats(self):
+        if self.dark_mode:
+            colors = {
+                "keyword": "#C792EA",
+                "builtin": "#82AAFF",
+                "string": "#C3E88D",
+                "number": "#F78C6C",
+                "comment": "#6C7086",
+            }
+        else:
+            colors = {
+                "keyword": "#8250DF",
+                "builtin": "#0550AE",
+                "string": "#0A3069",
+                "number": "#CF222E",
+                "comment": "#9CA3AF",
+            }
+
+        self.formats = {
+            "keyword": self._create_format(colors["keyword"], bold=True),
+            "builtin": self._create_format(colors["builtin"]),
+            "string": self._create_format(colors["string"]),
+            "number": self._create_format(colors["number"]),
+            "comment": self._create_format(colors["comment"], italic=True),
+        }
+
+    def _create_format(self, color, bold=False, italic=False):
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(color))
+        if bold:
+            fmt.setFontWeight(QFont.Weight.Bold)
+        if italic:
+            fmt.setFontItalic(True)
+        return fmt
+
+    def _setup_rules(self):
+        keywords = [
+            "and", "as", "assert", "async", "await", "break", "class", "continue",
+            "def", "del", "elif", "else", "except", "False", "finally", "for",
+            "from", "global", "if", "import", "in", "is", "lambda", "None",
+            "nonlocal", "not", "or", "pass", "raise", "return", "True", "try",
+            "while", "with", "yield",
+        ]
+        builtins = [
+            "print", "len", "range", "dict", "list", "set", "tuple", "str",
+            "int", "float", "bool", "min", "max", "sum", "zip", "map", "filter",
+            "sorted", "enumerate", "any", "all",
+        ]
+
+        self.rules = [
+            (re.compile(r"\"[^\"\\]*(\\.[^\"\\]*)*\""), "string"),
+            (re.compile(r"'[^'\\]*(\\.[^'\\]*)*'"), "string"),
+            (re.compile(r"\b\d+(\.\d+)?\b"), "number"),
+            (re.compile(r"\b(" + "|".join(keywords) + r")\b"), "keyword"),
+            (re.compile(r"\b(" + "|".join(builtins) + r")\b"), "builtin"),
+            (re.compile(r"#.*$"), "comment"),
+        ]
+
+    def set_dark_mode(self, dark_mode):
+        self.dark_mode = dark_mode
+        self._setup_formats()
+        self.rehighlight()
+
+    def highlightBlock(self, text):
+        for pattern, format_name in self.rules:
+            for match in pattern.finditer(text):
+                self.setFormat(
+                    match.start(),
+                    match.end() - match.start(),
+                    self.formats[format_name],
+                )

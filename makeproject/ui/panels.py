@@ -8,21 +8,22 @@ from pathlib import Path, PurePosixPath
 
 from PyQt6.QtCore import (
     Qt, QSize, QPoint, pyqtSignal, QTimer, QPropertyAnimation,
-    QEasingCurve, QUrl, QModelIndex
+    QEasingCurve, QUrl
 )
 from PyQt6.QtGui import (
-    QColor, QDesktopServices, QTextCursor, QKeySequence, QPainter,
-    QPainterPath, QPixmap, QShortcut
+    QColor, QDesktopServices, QTextCursor, QPainter,
+    QPainterPath, QPixmap
 )
 from PyQt6.QtWidgets import (
     QFrame, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QListWidget, QListWidgetItem, QTextEdit, QTreeWidget,
-    QTreeWidgetItem, QTableWidget, QTableWidgetItem, QHeaderView,
-    QMessageBox, QMenu, QSplitter, QSizePolicy
+    QTreeWidgetItem, QMessageBox, QMenu, QSplitter, QSizePolicy
 )
 
 from ..styles import get_code_font
 from .. import library
+from ..highlighter import PythonHighlighter
+from ..widgets import ToggleSwitch
 from .editors import CodeEditor
 from .dialog_utils import style_default_dialog_button
 from .template_items import TemplateListItem, AddTemplateButton
@@ -959,21 +960,6 @@ class PreviewPanel(QFrame):
         self.tree.update()
 
 
-class CustomTokensTable(QTableWidget):
-    """Table widget that clears selection when clicking empty space."""
-
-    def __init__(self, clear_callback, parent=None):
-        super().__init__(parent)
-        self._clear_callback = clear_callback
-
-    def mousePressEvent(self, event):
-        if self.itemAt(event.pos()) is None:
-            if self._clear_callback:
-                self._clear_callback()
-            return
-        super().mousePressEvent(event)
-
-
 class FileTemplatesPanel(QFrame):
     """Bottom center panel: file templates list and editor."""
 
@@ -1060,10 +1046,6 @@ class FileTemplatesPanel(QFrame):
         splitter.setSizes([180, 400])
 
         main_layout.addWidget(splitter, 1)
-
-        self._save_shortcut = QShortcut(QKeySequence.StandardKey.Save, self)
-        self._save_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._save_shortcut.activated.connect(self.save_current_template)
 
         self.refresh_list()
 
@@ -1560,15 +1542,33 @@ class FileTemplatesPanel(QFrame):
 
 
 class CustomTokensPanel(QFrame):
-    """Custom tokens table panel."""
+    """Custom tokens list and editor panel."""
 
     tokens_changed = pyqtSignal()
-    token_action = pyqtSignal(str, str, str, str)
+    token_action = pyqtSignal(str, str, object, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("customTokensPanel")
         self.setProperty("class", "panel")
+
+        self._current_token = None
+        self._has_unsaved_changes = False
+        self._original_value = ""
+        self._original_type = "text"
+        self._drafts = {}
+        self._editing_new = False
+        self._renaming_token = None
+        self._refreshing = False
+        self._refresh_pending = False
+        self._click_timer = QTimer()
+        self._click_timer.setSingleShot(True)
+        self._click_timer.setInterval(250)
+        self._pending_click_name = None
+        self._mouse_click_in_progress = False
+        self._mouse_clear_timer = QTimer()
+        self._mouse_clear_timer.setSingleShot(True)
+        self._mouse_clear_timer.timeout.connect(self._clear_mouse_click_flag)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -1579,198 +1579,586 @@ class CustomTokensPanel(QFrame):
         self._header_label.setToolTip("Global tokens available across all projects")
         layout.addWidget(self._header_label)
 
-        self.table = CustomTokensTable(self._clear_token_selection)
-        self.table.setColumnCount(2)
-        self.table.setHorizontalHeaderLabels(["Token Name", "Value"])
-        self.table.setCornerButtonEnabled(False)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.horizontalHeader().setSectionsClickable(True)
-        self.table.horizontalHeader().setSortIndicatorShown(True)
-        self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
-        self.table.installEventFilter(self)
-        self.table.horizontalHeader().installEventFilter(self)
-        self.table.verticalHeader().installEventFilter(self)
-        self._header_label.installEventFilter(self)
-        layout.addWidget(self.table, 1)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        input_layout = QHBoxLayout()
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 8, 0)
+        left_layout.setSpacing(8)
 
-        self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("TokenName")
-        input_layout.addWidget(self.name_input)
+        self.token_list = QListWidget()
+        self.token_list.setMinimumWidth(160)
+        self.token_list.itemClicked.connect(self._on_item_clicked)
+        self.token_list.itemDoubleClicked.connect(self._on_item_double_clicked)
+        self.token_list.currentItemChanged.connect(self._on_current_item_changed)
+        self.token_list.installEventFilter(self)
+        self.token_list.viewport().installEventFilter(self)
+        self.token_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.token_list.customContextMenuRequested.connect(self._show_context_menu)
+        left_layout.addWidget(self.token_list, 1)
 
-        self.value_input = QLineEdit()
-        self.value_input.setPlaceholderText("Value")
-        self.value_input.returnPressed.connect(self._add_token)
-        input_layout.addWidget(self.value_input)
+        splitter.addWidget(left_widget)
 
-        layout.addLayout(input_layout)
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(8)
 
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(6)
-
-        self.add_btn = QPushButton("Add/Update")
-        self.add_btn.clicked.connect(self._add_token)
-        btn_layout.addWidget(self.add_btn)
-
-        self.remove_btn = QPushButton("Remove")
-        self.remove_btn.clicked.connect(self._remove_token)
-        btn_layout.addWidget(self.remove_btn)
-
-        btn_layout.addStretch()
-
-        layout.addLayout(btn_layout)
-
-        self.table.itemSelectionChanged.connect(self._on_selection_changed)
-
-        self._sort_column = 0
-        self._sort_ascending = True
-        self._token_count = 0
-        self.table.horizontalHeader().setSortIndicator(
-            self._sort_column,
-            Qt.SortOrder.AscendingOrder
+        self.editor = CodeEditor(
+            indent_size=4,
+            placeholder="Token value",
         )
-        self.refresh_table()
+        self.editor.textChanged.connect(self._track_unsaved_changes)
+        right_layout.addWidget(self.editor, 1)
+
+        footer_layout = QHBoxLayout()
+        self.reference_label = QLabel("Reference: {mp:<name>}")
+        self.reference_label.setProperty("class", "reference")
+        footer_layout.addWidget(self.reference_label)
+        footer_layout.addStretch()
+
+        toggle_label = QLabel("Python Token")
+        toggle_label.setToolTip(
+            "Single line = expression, multi-line = block."
+        )
+        footer_layout.addWidget(toggle_label)
+
+        self.python_toggle = ToggleSwitch(checked=False)
+        self.python_toggle.setToolTip(
+            "Use Python for this token. Single line = expression, multi-line = block."
+        )
+        self.python_toggle.toggled.connect(self._on_python_toggled)
+        footer_layout.addWidget(self.python_toggle)
+
+        right_layout.addLayout(footer_layout)
+        splitter.addWidget(right_widget)
+
+        splitter.setSizes([200, 420])
+        layout.addWidget(splitter, 1)
+
+        self._token_count = 0
+        self._apply_python_mode(False)
+        self.refresh_list()
 
     def has_tokens(self) -> bool:
-        """Return True when the table has real token rows."""
+        """Return True when the list has real token rows."""
         return self._token_count > 0
 
-    def refresh_table(self):
-        tokens = library.load_custom_tokens()
-        items = list(tokens.items())
-        self._token_count = len(items)
-        if self._sort_column == 0:
-            items.sort(key=lambda x: x[0].lower(), reverse=not self._sort_ascending)
-        else:
-            items.sort(key=lambda x: str(x[1]).lower(), reverse=not self._sort_ascending)
-
-        if not items:
-            self.table.setRowCount(1)
-            for col in range(2):
-                placeholder = QTableWidgetItem("")
-                placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
-                self.table.setItem(0, col, placeholder)
-            self.table.setRowHidden(0, True)
-            self.table.clearSelection()
-            self.table.setCurrentIndex(QModelIndex())
-            return
-
-        self.table.setRowCount(len(items))
-        self.table.setRowHidden(0, False)
-
-        for row, (name, value) in enumerate(items):
-            name_item = QTableWidgetItem(name)
-            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table.setItem(row, 0, name_item)
-
-            value_item = QTableWidgetItem(value)
-            value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table.setItem(row, 1, value_item)
-
-    def _clear_token_selection(self):
-        if not hasattr(self, "table") or self.table is None:
-            return
-        if self.table.currentRow() >= 0 or self.table.selectedItems():
-            self.table.clearSelection()
-            self.table.setCurrentIndex(QModelIndex())
-        self.name_input.clear()
-        self.value_input.clear()
-
-    def _on_selection_changed(self):
-        current_row = self.table.currentRow()
-        if current_row >= 0:
-            name_item = self.table.item(current_row, 0)
-            value_item = self.table.item(current_row, 1)
-            if name_item and value_item:
-                self.name_input.setText(name_item.text())
-                self.value_input.setText(value_item.text())
-                return
-        self.name_input.clear()
-        self.value_input.clear()
-
-    def _add_token(self):
-        name = self.name_input.text().strip()
-        value = self.value_input.text()
-        if not name:
-            return
-        existing = library.load_custom_tokens()
-        old_value = existing.get(name)
-        library.update_custom_token(name, value)
-        self.refresh_table()
-        self._select_token_by_name(name, value)
-        self.tokens_changed.emit()
-        action = "update" if old_value is not None else "add"
-        self.token_action.emit(action, name, old_value or "", value)
-
-    def _remove_token(self):
-        current_row = self.table.currentRow()
-        if current_row >= 0:
-            name_item = self.table.item(current_row, 0)
-            if name_item:
-                name = name_item.text()
-                existing = library.load_custom_tokens()
-                old_value = existing.get(name)
-                library.delete_custom_token(name)
-                self.refresh_table()
-                self.tokens_changed.emit()
-                if old_value is not None:
-                    self.token_action.emit("delete", name, old_value, "")
-                if self.table.currentRow() < 0:
-                    self.name_input.clear()
-                    self.value_input.clear()
-
-    def _select_token_by_name(self, name: str, value: str):
-        if not self.table:
-            return
-        for row in range(self.table.rowCount()):
-            item = self.table.item(row, 0)
-            if item and item.text() == name:
-                self.table.selectRow(row)
-                self.name_input.setText(name)
-                self.value_input.setText(value)
-                return
-
-    def _on_header_clicked(self, index: int):
-        if index not in (0, 1):
-            return
-        if self._sort_column == index:
-            self._sort_ascending = not self._sort_ascending
-        else:
-            self._sort_column = index
-            self._sort_ascending = True
-        self.table.horizontalHeader().setSortIndicator(
-            self._sort_column,
-            Qt.SortOrder.AscendingOrder if self._sort_ascending else Qt.SortOrder.DescendingOrder
-        )
-        self.refresh_table()
+    def set_dark_mode(self, dark_mode: bool):
+        self.editor.set_dark_mode(dark_mode)
 
     def eventFilter(self, obj, event):
         from PyQt6.QtCore import QEvent
-        if not hasattr(self, "table") or self.table is None:
-            return super().eventFilter(obj, event)
-        if obj == self.table and event.type() == QEvent.Type.KeyPress:
-            if event.key() in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete):
-                self._remove_token()
-                return True
-        if event.type() == QEvent.Type.MouseButtonPress:
-            if obj in (
-                self._header_label,
-                self.table.horizontalHeader(),
-                self.table.verticalHeader(),
-            ):
-                self._clear_token_selection()
+        if obj in (self.token_list, self.token_list.viewport()):
+            if event.type() == QEvent.Type.MouseButtonPress:
+                self._mouse_click_in_progress = True
+            elif event.type() in (QEvent.Type.MouseButtonRelease, QEvent.Type.MouseButtonDblClick):
+                self._mouse_clear_timer.start(0)
+            elif event.type() == QEvent.Type.FocusOut:
+                self._finalize_pending_click()
+            elif event.type() == QEvent.Type.KeyPress:
+                if self._pending_click_name or self._click_timer.isActive():
+                    self._finalize_pending_click()
+                key = event.key()
+
+                if key == Qt.Key.Key_Down:
+                    current_row = self.token_list.currentRow()
+                    if current_row >= self.token_list.count() - 2:
+                        return True
+                elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                    current = self.token_list.currentItem()
+                    if current:
+                        widget = self.token_list.itemWidget(current)
+                        if isinstance(widget, TemplateListItem) and not widget._editable:
+                            name = widget.get_name()
+                            if name:
+                                self._renaming_token = name
+                                self.refresh_list()
+                                return True
+                elif key in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete):
+                    current = self.token_list.currentItem()
+                    if current:
+                        widget = self.token_list.itemWidget(current)
+                        if isinstance(widget, TemplateListItem) and not widget._editable:
+                            name = widget.get_name()
+                            if name:
+                                self._delete_token(name)
+                                return True
         return super().eventFilter(obj, event)
 
-    def mousePressEvent(self, event):
-        self._clear_token_selection()
-        super().mousePressEvent(event)
+    def _current_state(self) -> dict:
+        return {
+            "type": "python" if self.python_toggle.isChecked() else "text",
+            "value": self.editor.toPlainText(),
+        }
 
-    def mouseReleaseEvent(self, event):
-        self._clear_token_selection()
-        super().mouseReleaseEvent(event)
+    def _apply_python_mode(self, is_python: bool):
+        self.editor.set_highlighter(PythonHighlighter if is_python else None)
+        if is_python:
+            self.editor.setPlaceholderText(
+                """# Single-line expression:
+context["title"].lower().replace(" ", "-")
+
+# Multi-line block (set result or print):
+words = context["description"].split()
+result = "-".join(words)
+                """)
+        else:
+            self.editor.setPlaceholderText("Token value")
+
+    def _on_python_toggled(self, checked: bool):
+        self._apply_python_mode(checked)
+        self._track_unsaved_changes()
+
+    def _reset_editor_scroll(self):
+        self.editor.horizontalScrollBar().setValue(0)
+        self.editor.verticalScrollBar().setValue(0)
+
+    def refresh_list(self):
+        if self._refreshing:
+            self._refresh_pending = True
+            return
+        self._refreshing = True
+        self.token_list.clear()
+        tokens = library.load_custom_tokens()
+        token_names = sorted(tokens.keys(), key=lambda name: name.lower())
+        self._token_count = len(token_names)
+        unsaved_names = set(self._drafts.keys())
+        if self._has_unsaved_changes and self._current_token:
+            unsaved_names.add(self._current_token)
+
+        for name in token_names:
+            if name == self._renaming_token:
+                item = QListWidgetItem()
+                widget = TemplateListItem(
+                    name,
+                    editable=True,
+                    placeholder="TokenName",
+                    delete_square=True,
+                )
+                widget.name_edited.connect(self._on_rename_confirmed)
+                widget.name_canceled.connect(self._on_rename_canceled)
+                widget.name_edit.setText(name)
+                item.setSizeHint(widget.sizeHint())
+                self.token_list.addItem(item)
+                self.token_list.setItemWidget(item, widget)
+                self.token_list.setCurrentItem(item)
+                QTimer.singleShot(50, widget.focus_edit)
+            else:
+                token_state = None
+                if name == self._current_token and self._has_unsaved_changes:
+                    token_state = self._current_state()
+                if token_state is None:
+                    token_state = self._drafts.get(name) or tokens.get(name, {})
+                token_type = token_state.get("type", "text")
+                badge_text = "py" if token_type == "python" else ""
+                item = QListWidgetItem()
+                widget = TemplateListItem(
+                    name,
+                    delete_square=True,
+                    delete_tooltip="Delete token",
+                    badge_text=badge_text,
+                    badge_tooltip="Python token" if badge_text else "",
+                )
+                widget.rename_requested.connect(self._start_rename_token)
+                widget.delete_clicked.connect(self._delete_token)
+                if name in unsaved_names:
+                    widget.set_unsaved(True)
+                item.setSizeHint(widget.sizeHint())
+                self.token_list.addItem(item)
+                self.token_list.setItemWidget(item, widget)
+
+                if name == self._current_token:
+                    self.token_list.setCurrentItem(item)
+
+        if self._editing_new:
+            item = QListWidgetItem()
+            widget = TemplateListItem(
+                "",
+                editable=True,
+                placeholder="TokenName",
+                delete_square=True,
+            )
+            widget.name_edited.connect(self._on_new_name_confirmed)
+            widget.name_canceled.connect(self._on_new_name_canceled)
+            item.setSizeHint(widget.sizeHint())
+            self.token_list.addItem(item)
+            self.token_list.setItemWidget(item, widget)
+            self.token_list.setCurrentItem(item)
+            QTimer.singleShot(50, widget.focus_edit)
+
+        add_item = QListWidgetItem()
+        add_widget = AddTemplateButton()
+        add_widget.clicked.connect(self._create_new_token)
+        add_item.setSizeHint(QSize(0, add_widget.sizeHint().height()))
+        add_item.setFlags(
+            add_item.flags()
+            & ~Qt.ItemFlag.ItemIsSelectable
+            & ~Qt.ItemFlag.ItemIsEnabled
+        )
+        self.token_list.addItem(add_item)
+        self.token_list.setItemWidget(add_item, add_widget)
+
+        self._refreshing = False
+        if self._refresh_pending:
+            self._refresh_pending = False
+            QTimer.singleShot(0, self.refresh_list)
+
+    def _clear_mouse_click_flag(self):
+        self._mouse_click_in_progress = False
+
+    def _finalize_pending_click(self):
+        if self._click_timer.isActive():
+            self._click_timer.stop()
+        if self._pending_click_name:
+            self._load_token(self._pending_click_name)
+            self._pending_click_name = None
+        self._mouse_click_in_progress = False
+
+    def _on_current_item_changed(self, current, previous):
+        if self._refreshing or current is None:
+            return
+        if self._mouse_click_in_progress or self._pending_click_name or self._click_timer.isActive():
+            return
+        widget = self.token_list.itemWidget(current)
+        if isinstance(widget, TemplateListItem):
+            name = widget.get_name()
+            if name and not widget._editable and name != self._current_token:
+                self._load_token(name)
+
+    def _on_item_clicked(self, item: QListWidgetItem):
+        widget = self.token_list.itemWidget(item)
+        if isinstance(widget, TemplateListItem):
+            name = widget.get_name()
+            if name and not widget._editable:
+                if name == self._current_token:
+                    return
+                self._pending_click_name = name
+                if self._click_timer.receivers(self._click_timer.timeout) > 0:
+                    self._click_timer.timeout.disconnect()
+                self._click_timer.timeout.connect(self._process_single_click)
+                self._click_timer.start()
+
+    def _process_single_click(self):
+        if self._pending_click_name:
+            self._load_token(self._pending_click_name)
+        self._pending_click_name = None
+
+    def _on_item_double_clicked(self, item: QListWidgetItem):
+        self._click_timer.stop()
+        self._pending_click_name = None
+
+        widget = self.token_list.itemWidget(item)
+        if isinstance(widget, TemplateListItem) and not widget._editable:
+            name = widget.get_name()
+            if name:
+                self._renaming_token = name
+                self.refresh_list()
+
+    def _show_context_menu(self, pos):
+        item = self.token_list.itemAt(pos)
+        if item is None:
+            return
+        widget = self.token_list.itemWidget(item)
+        if not isinstance(widget, TemplateListItem) or widget._editable:
+            return
+        name = widget.get_name()
+        if not name:
+            return
+        self.token_list.setCurrentItem(item)
+        menu = QMenu(self)
+        rename_action = menu.addAction("Rename")
+        duplicate_action = menu.addAction("Duplicate")
+        menu.addSeparator()
+        delete_action = menu.addAction("Delete")
+        action = menu.exec(self.token_list.viewport().mapToGlobal(pos))
+        if action == rename_action:
+            self._start_rename_token(name)
+        elif action == duplicate_action:
+            self._duplicate_token(name)
+        elif action == delete_action:
+            self._delete_token(name)
+
+    def _start_rename_token(self, name: str):
+        self._click_timer.stop()
+        self._pending_click_name = None
+        self._renaming_token = name
+        self.refresh_list()
+
+    def _duplicate_token(self, name: str):
+        tokens = library.load_custom_tokens()
+        token = tokens.get(name)
+        if not token:
+            return
+        new_name = self._next_available_token_name(name, set(tokens.keys()))
+        library.update_custom_token(new_name, token.get("value", ""), token.get("type", "text"))
+        self._drafts.pop(new_name, None)
+        self._current_token = new_name
+        self._original_value = token.get("value", "")
+        self._original_type = token.get("type", "text")
+        self._has_unsaved_changes = False
+        self._set_editor_state(self._original_type, self._original_value)
+        self.reference_label.setText(f"Reference: {{mp:{new_name}}}")
+        self.refresh_list()
+        self.tokens_changed.emit()
+        self.token_action.emit("add", new_name, None, token)
+
+    def _stash_current_token(self):
+        if not self._current_token:
+            return
+        current_state = self._current_state()
+        if (
+            current_state["value"] != self._original_value
+            or current_state["type"] != self._original_type
+        ):
+            self._drafts[self._current_token] = current_state
+        else:
+            self._drafts.pop(self._current_token, None)
+
+    def _set_editor_state(self, token_type: str, value: str):
+        self.python_toggle.blockSignals(True)
+        self.editor.blockSignals(True)
+        is_python = token_type == "python"
+        self.python_toggle.setChecked(is_python)
+        self._apply_python_mode(is_python)
+        self.editor.setPlainText(value)
+        self.editor.blockSignals(False)
+        self.python_toggle.blockSignals(False)
+        self._reset_editor_scroll()
+
+    def _load_token(self, name: str):
+        self._stash_current_token()
+        tokens = library.load_custom_tokens()
+        token = tokens.get(name)
+        if token is None:
+            return
+        draft = self._drafts.get(name)
+        token_type = token.get("type", "text")
+        value = token.get("value", "")
+        editor_value = draft["value"] if draft else value
+        editor_type = draft["type"] if draft else token_type
+
+        self._current_token = name
+        self._original_value = value
+        self._original_type = token_type
+        self._has_unsaved_changes = (
+            editor_value != value or editor_type != token_type
+        )
+        self._set_editor_state(editor_type, editor_value)
+        self.reference_label.setText(f"Reference: {{mp:{name}}}")
+        self.refresh_list()
+
+    def _create_new_token(self):
+        self._stash_current_token()
+        self._current_token = None
+        self._has_unsaved_changes = False
+        self._original_value = ""
+        self._original_type = "text"
+        self._editing_new = True
+        self._renaming_token = None
+        self._set_editor_state("text", "")
+        self.reference_label.setText("Reference: {mp:<name>}")
+        self.refresh_list()
+
+    def _on_new_name_confirmed(self, old_name: str, new_name: str):
+        name = new_name.strip()
+        tokens = library.load_custom_tokens()
+        if name in tokens:
+            decision = self._prompt_token_name_conflict(name)
+            if decision == "cancel":
+                self._editing_new = False
+                self.refresh_list()
+                self.token_list.setFocus()
+                return
+            if decision == "keep":
+                name = self._next_available_token_name(name, set(tokens.keys()))
+        self._editing_new = False
+        self._current_token = name
+        self._save_token()
+        self.token_list.setFocus()
+
+    def _on_new_name_canceled(self, old_name: str):
+        self._editing_new = False
+        self.refresh_list()
+
+    def _on_rename_confirmed(self, old_name: str, new_name: str):
+        self._renaming_token = None
+        name = new_name.strip()
+        if old_name != name and name:
+            tokens = library.load_custom_tokens()
+            if name in tokens:
+                decision = self._prompt_token_name_conflict(name)
+                if decision == "cancel":
+                    self.refresh_list()
+                    self.token_list.setFocus()
+                    return
+                if decision == "keep":
+                    name = self._next_available_token_name(name, set(tokens.keys()))
+            token_data = tokens.pop(old_name, None)
+            if token_data is not None:
+                tokens[name] = token_data
+                library.save_custom_tokens(tokens)
+                if self._current_token == old_name:
+                    self._current_token = name
+                    self.reference_label.setText(f"Reference: {{mp:{name}}}")
+                if old_name in self._drafts:
+                    self._drafts[name] = self._drafts.pop(old_name)
+                if self._current_token == name:
+                    self._original_value = token_data.get("value", "")
+                    self._original_type = token_data.get("type", "text")
+                    self._has_unsaved_changes = (
+                        self._current_state()["value"] != self._original_value
+                        or self._current_state()["type"] != self._original_type
+                    )
+                self.tokens_changed.emit()
+        self.refresh_list()
+        self.token_list.setFocus()
+
+    def _on_rename_canceled(self, old_name: str):
+        self._renaming_token = None
+        self.refresh_list()
+        self.token_list.setFocus()
+
+    def _next_available_token_name(self, name: str, existing: set[str]) -> str:
+        index = 1
+        candidate = name
+        while candidate in existing:
+            candidate = f"{name} ({index})"
+            index += 1
+        return candidate
+
+    def _prompt_token_name_conflict(self, name: str) -> str:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Question)
+        dialog.setWindowTitle("Token Exists")
+        dialog.setText(f"\"{name}\" already exists.")
+        dialog.setInformativeText("Choose what to do with this token.")
+        overwrite_btn = dialog.addButton("Overwrite", QMessageBox.ButtonRole.DestructiveRole)
+        keep_btn = dialog.addButton("Keep Both", QMessageBox.ButtonRole.AcceptRole)
+        cancel_btn = dialog.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        overwrite_btn.setProperty("class", "dangerButton")
+        style_default_dialog_button(keep_btn)
+        cancel_btn.setProperty("class", "cancelButton")
+        dialog.setDefaultButton(keep_btn)
+        dialog.exec()
+        clicked = dialog.clickedButton()
+        if clicked == cancel_btn:
+            return "cancel"
+        if clicked == keep_btn:
+            return "keep"
+        return "overwrite"
+
+    def _track_unsaved_changes(self):
+        if not self._current_token:
+            return
+        content = self.editor.toPlainText()
+        if not content:
+            self._reset_editor_scroll()
+        self.mark_unsaved_changes(self._current_state())
+
+    def mark_unsaved_changes(self, current_state: dict):
+        has_changes = (
+            current_state["value"] != self._original_value
+            or current_state["type"] != self._original_type
+        )
+        if has_changes != self._has_unsaved_changes:
+            self._has_unsaved_changes = has_changes
+            self.refresh_list()
+
+    def _save_token(self):
+        if not self._current_token:
+            return
+        current_state = self._current_state()
+        tokens = library.load_custom_tokens()
+        old_token = tokens.get(self._current_token)
+        library.update_custom_token(
+            self._current_token,
+            current_state["value"],
+            current_state["type"],
+        )
+        new_token = {
+            "type": current_state["type"],
+            "value": current_state["value"],
+        }
+        self._original_value = current_state["value"]
+        self._original_type = current_state["type"]
+        self._has_unsaved_changes = False
+        self._drafts.pop(self._current_token, None)
+        self.reference_label.setText(f"Reference: {{mp:{self._current_token}}}")
+        self.refresh_list()
+        if old_token != new_token:
+            action = "add" if old_token is None else "update"
+            self.tokens_changed.emit()
+            self.token_action.emit(action, self._current_token, old_token, new_token)
+
+    def save_current_token(self):
+        self._save_token()
+
+    def save_all_unsaved(self):
+        if self._current_token and self._has_unsaved_changes:
+            self._drafts[self._current_token] = self._current_state()
+        if not self._drafts:
+            return
+        tokens = library.load_custom_tokens()
+        changed = False
+        for name, state in list(self._drafts.items()):
+            old_token = tokens.get(name)
+            tokens[name] = {
+                "type": state.get("type", "text"),
+                "value": state.get("value", ""),
+            }
+            if old_token != tokens[name]:
+                changed = True
+            if name == self._current_token:
+                self._original_value = state.get("value", "")
+                self._original_type = state.get("type", "text")
+                self._has_unsaved_changes = False
+            self._drafts.pop(name, None)
+        if changed:
+            library.save_custom_tokens(tokens)
+            self.tokens_changed.emit()
+        self.refresh_list()
+
+    def has_unsaved_changes(self) -> bool:
+        return self._has_unsaved_changes or bool(self._drafts)
+
+    def clear_all_state(self):
+        self._drafts.clear()
+        self._current_token = None
+        self._has_unsaved_changes = False
+        self._original_value = ""
+        self._original_type = "text"
+        self._editing_new = False
+        self._renaming_token = None
+        self._set_editor_state("text", "")
+        self.reference_label.setText("Reference: {mp:<name>}")
+        self.refresh_list()
+
+    def _delete_token(self, name: str):
+        tokens = library.load_custom_tokens()
+        token = tokens.get(name)
+        if token is None:
+            return
+        library.delete_custom_token(name)
+        self._drafts.pop(name, None)
+        if name == self._current_token:
+            self._current_token = None
+            self._has_unsaved_changes = False
+            self._original_value = ""
+            self._original_type = "text"
+            self._set_editor_state("text", "")
+            self.reference_label.setText("Reference: {mp:<name>}")
+        self.refresh_list()
+        self.tokens_changed.emit()
+        self.token_action.emit("delete", name, token, None)
+
+    def select_first_token(self):
+        for i in range(self.token_list.count()):
+            item = self.token_list.item(i)
+            widget = self.token_list.itemWidget(item)
+            if isinstance(widget, TemplateListItem) and not widget._editable:
+                self.token_list.setCurrentItem(item)
+                return
 
 
 class SegmentedControl(QFrame):

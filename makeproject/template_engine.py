@@ -32,12 +32,23 @@ class FileNode:
         return sum(child.file_count() for child in self.children)
 
 
+class TokenContext(dict):
+    """Dictionary wrapper that carries python token definitions."""
+
+    def __init__(self, *args, python_tokens=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.python_tokens = python_tokens or {}
+
+
 class YAMLParseError(Exception):
     """Exception for YAML parsing errors with line numbers."""
     def __init__(self, message: str, line: int = None):
         self.line = line
         self.message = message
-        super().__init__(f"Invalid YAML on line {line}" if line else message)
+        if line:
+            super().__init__(f"{message} (line {line})")
+        else:
+            super().__init__(message)
 
 
 def preprocess_yaml(text: str) -> str:
@@ -65,12 +76,12 @@ def parse_yaml(text: str) -> Tuple[Optional[Dict], Optional[str]]:
         return None, f"Invalid YAML: {str(e)}"
 
 
-def build_token_context(yaml_data: Optional[Any], title: str = "", description: str = "") -> Dict[str, str]:
+def build_token_context(yaml_data: Optional[Any], title: str = "", description: str = "") -> TokenContext:
     """
     Build the token substitution context from YAML data and user input.
     Includes lowercase aliases for case-insensitive matching.
     """
-    context = {}
+    context = TokenContext()
     
     # Add user-provided values
     context['title'] = title
@@ -78,7 +89,14 @@ def build_token_context(yaml_data: Optional[Any], title: str = "", description: 
     
     # Add custom tokens from library
     custom_tokens = library.load_custom_tokens()
-    context.update(custom_tokens)
+    python_tokens = {}
+    for name, token in custom_tokens.items():
+        token_type = token.get("type", "text")
+        token_value = token.get("value", "")
+        context[name] = token_value
+        if token_type == "python":
+            python_tokens[name.lower()] = token_value
+    context.python_tokens = python_tokens
     
     # Add lowercase aliases for case-insensitive matching
     lowercase_aliases = {}
@@ -93,6 +111,7 @@ def substitute_tokens(text: str, context: Dict[str, str]) -> str:
     """
     Substitute tokens in text.
     - {mp:TokenName} uses the token context (case-insensitive)
+      (if the token is marked as python, it will be evaluated)
     - {mp.py: <expr>} evaluates a Python expression
     - {mp.py|<code>} executes Python code (multi-line supported)
     """
@@ -133,10 +152,49 @@ def substitute_tokens(text: str, context: Dict[str, str]) -> str:
         except Exception as exc:
             raise YAMLParseError(f"Python token error: {exc}") from exc
 
+    def replace_custom_token(token_name: str, default_text: str):
+        python_tokens = getattr(context, "python_tokens", {})
+        lookup = token_name.lower()
+        if lookup in python_tokens:
+            code = python_tokens[lookup]
+            try:
+                if "\n" in code:
+                    value = run_python(textwrap.dedent(code).strip("\n"), is_expression=False)
+                    if value is None:
+                        return ""
+                    if isinstance(value, (list, dict)):
+                        return yaml.dump(
+                            value,
+                            default_flow_style=False,
+                            allow_unicode=True,
+                        ).rstrip("\n")
+                    return "" if value is None else str(value)
+                stripped = code.strip()
+                if not stripped:
+                    return ""
+                try:
+                    return run_python(stripped, is_expression=True)
+                except SyntaxError:
+                    value = run_python(textwrap.dedent(code).strip("\n"), is_expression=False)
+                    if value is None:
+                        return ""
+                    if isinstance(value, (list, dict)):
+                        return yaml.dump(
+                            value,
+                            default_flow_style=False,
+                            allow_unicode=True,
+                        ).rstrip("\n")
+                    return "" if value is None else str(value)
+            except Exception as exc:
+                raise YAMLParseError(f"Python token error: {exc}") from exc
+        if lookup in context:
+            return context.get(lookup, default_text)
+        raise YAMLParseError(f'Unknown token "{token_name}".')
+
     def replace_token(match):
         token_name = match.group(1)
         # Case-insensitive lookup
-        return context.get(token_name.lower(), match.group(0))
+        return replace_custom_token(token_name, match.group(0))
 
     # Process python block tokens first.
     text = re.sub(r'\{mp\.py\|([\s\S]*?)\}', replace_python_block, text, flags=re.IGNORECASE)
@@ -330,9 +388,17 @@ def _process_file_item(item: Any, context: Dict[str, str], include_stack: List[s
 
     if len(item) == 1:
         key, value = next(iter(item.items()))
+        key_text = _normalize_token_value(key)
+        token_probe = None
+        if re.search(r'\{[mM][pP]\s*:', key_text):
+            token_probe = key_text
+        elif re.match(r'^[mM][pP]\s*:', key_text):
+            token_probe = f"{{{key_text}}}"
+        if token_probe:
+            substitute_tokens(token_probe, context)
+        folder_key = substitute_tokens(key_text, context)
         if isinstance(value, list):
-            foldername = substitute_tokens(_normalize_token_value(key), context)
-            foldername = sanitize_filename(foldername)
+            foldername = sanitize_filename(folder_key)
             folder = FileNode(name=foldername, is_folder=True)
             folder.children.extend(_collect_nodes(value, context, include_stack))
             return [folder]

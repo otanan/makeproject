@@ -139,6 +139,8 @@ Built-in tokens:
 Custom tokens:
 
 Use the Custom Tokens panel to add your own (for example, `email`), then reference them with `{mp:email}`.
+Custom tokens can also be marked as Python; the app evaluates them when referenced with `{mp:name}`.
+Single-line values are treated as expressions, multi-line values are treated as blocks.
 
 Python tokens:
 

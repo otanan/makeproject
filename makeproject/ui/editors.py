@@ -23,6 +23,7 @@ class CodeEditor(IndentTextEdit):
         parent=None,
     ):
         super().__init__(parent, indent_size=indent_size)
+        self._dark_mode = dark_mode
         self.setFont(get_code_font())
         self.setPlaceholderText(placeholder)
         self._highlighter = None
@@ -30,6 +31,14 @@ class CodeEditor(IndentTextEdit):
             self._highlighter = highlighter_cls(self.document(), dark_mode=dark_mode)
 
     def set_dark_mode(self, dark_mode):
+        self._dark_mode = dark_mode
         super().set_dark_mode(dark_mode)
         if self._highlighter:
             self._highlighter.set_dark_mode(dark_mode)
+
+    def set_highlighter(self, highlighter_cls: Optional[Type]):
+        if self._highlighter:
+            self._highlighter.setDocument(None)
+            self._highlighter = None
+        if highlighter_cls:
+            self._highlighter = highlighter_cls(self.document(), dark_mode=self._dark_mode)
