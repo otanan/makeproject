@@ -97,7 +97,12 @@ class YAMLHighlighter(QSyntaxHighlighter):
         self.rules.append((re.compile(r'^(---|\.\.\.)\s*$'), 'document'))
         
         # file/folder/contents/template keys (special highlighting)
-        self.rules.append((re.compile(r'^\s*-?\s*(file|folder|contents|content|template|file_template|project_template)\s*:'), 'file_folder_key'))
+        self.rules.append((
+            re.compile(
+                r'^\s*-?\s*(file|folder|contents|content|template|file_template|project_template|title|description)\s*:'
+            ),
+            'file_folder_key'
+        ))
         
         # Regular YAML keys
         self.rules.append((re.compile(r'^\s*-?\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:'), 'key'))
@@ -190,7 +195,8 @@ class YAMLHighlighter(QSyntaxHighlighter):
             ):
                 key_value = key_value[1:-1]
             if key_value.lower() not in (
-                'file', 'folder', 'contents', 'content', 'template', 'file_template', 'project_template'
+                'file', 'folder', 'contents', 'content', 'template', 'file_template',
+                'project_template', 'title', 'description'
             ):
                 self.setFormat(prefix_len, key_len, self.formats['file_folder_name'])
                 for match in re.finditer(r'\{mp:[^}]+\}', key_text, re.IGNORECASE):
@@ -213,7 +219,7 @@ class YAMLHighlighter(QSyntaxHighlighter):
                     prefix_len = len(implicit_file_match.group(1))
                     value_text = implicit_file_match.group(2)
                     value_len = len(value_text)
-                    self.setFormat(prefix_len, value_len, self.formats['file_folder_name'])
+                    self.setFormat(prefix_len, value_len, self.formats['key'])
                     for match in re.finditer(r'\{mp:[^}]+\}', value_text, re.IGNORECASE):
                         self.setFormat(prefix_len + match.start(),
                                       match.end() - match.start(),
@@ -229,7 +235,10 @@ class YAMLHighlighter(QSyntaxHighlighter):
                 for match in pattern.finditer(text):
                     # Check if this is not a file/folder/contents key (already handled)
                     key = match.group(1) if match.lastindex else match.group(0)
-                    if key.lower() not in ('file', 'folder', 'contents', 'content', 'template', 'file_template', 'project_template'):
+                    if key.lower() not in (
+                        'file', 'folder', 'contents', 'content', 'template', 'file_template',
+                        'project_template', 'title', 'description'
+                    ):
                         key_start = match.start(1) if match.lastindex else match.start()
                         key_len = len(key)
                         self.setFormat(key_start, key_len, self.formats[format_name])
@@ -238,7 +247,7 @@ class YAMLHighlighter(QSyntaxHighlighter):
                 for match in pattern.finditer(text):
                     # Find the keyword position
                     keyword_match = re.search(
-                        r'(file|folder|contents|content|template|file_template|project_template)',
+                        r'(file|folder|contents|content|template|file_template|project_template|title|description)',
                         match.group(),
                         re.IGNORECASE
                     )

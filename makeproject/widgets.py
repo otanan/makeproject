@@ -620,6 +620,23 @@ class IndentTextEdit(QPlainTextEdit):
         cursor.setPosition(selection_start)
         cursor.setPosition(selection_end, QTextCursor.MoveMode.KeepAnchor)
         self.setTextCursor(cursor)
+
+    def _selected_block_range(self) -> tuple[int, int] | None:
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            return None
+        start = cursor.selectionStart()
+        end = cursor.selectionEnd()
+        temp = QTextCursor(self.document())
+        temp.setPosition(start)
+        start_block = temp.blockNumber()
+        temp.setPosition(end)
+        end_block = temp.blockNumber()
+        if temp.positionInBlock() == 0 and end_block > start_block:
+            end_block -= 1
+        if end_block <= start_block:
+            return None
+        return start_block, end_block
     
     def _comment_line(self, line_text: str) -> str:
         """Add comment to a line."""
@@ -641,6 +658,33 @@ class IndentTextEdit(QPlainTextEdit):
     
     def _indent_line(self):
         """Add indentation spaces to the beginning of the current line."""
+        block_range = self._selected_block_range()
+        if block_range:
+            start_block, end_block = block_range
+            cursor = self.textCursor()
+            cursor.beginEditBlock()
+
+            cursor.setPosition(0)
+            for _ in range(start_block):
+                cursor.movePosition(QTextCursor.MoveOperation.NextBlock)
+            cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+            selection_start = cursor.position()
+
+            for i in range(start_block, end_block + 1):
+                cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+                cursor.insertText(" " * self._indent_size)
+                if i < end_block:
+                    cursor.movePosition(QTextCursor.MoveOperation.NextBlock)
+
+            cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+            selection_end = cursor.position()
+            cursor.endEditBlock()
+
+            cursor.setPosition(selection_start)
+            cursor.setPosition(selection_end, QTextCursor.MoveMode.KeepAnchor)
+            self.setTextCursor(cursor)
+            return
+
         cursor = self.textCursor()
         line_text = cursor.block().text()
         if not line_text.strip():
@@ -687,6 +731,44 @@ class IndentTextEdit(QPlainTextEdit):
     
     def _unindent_line(self):
         """Remove up to one indentation level from the beginning of the current line."""
+        block_range = self._selected_block_range()
+        if block_range:
+            start_block, end_block = block_range
+            cursor = self.textCursor()
+            cursor.beginEditBlock()
+
+            cursor.setPosition(0)
+            for _ in range(start_block):
+                cursor.movePosition(QTextCursor.MoveOperation.NextBlock)
+            cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+            selection_start = cursor.position()
+
+            for i in range(start_block, end_block + 1):
+                cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+                cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+                line_text = cursor.selectedText()
+                remove_count = 0
+                for char in line_text:
+                    if char == ' ' and remove_count < self._indent_size:
+                        remove_count += 1
+                    else:
+                        break
+                if remove_count > 0:
+                    cursor.insertText(line_text[remove_count:])
+                else:
+                    cursor.clearSelection()
+                if i < end_block:
+                    cursor.movePosition(QTextCursor.MoveOperation.NextBlock)
+
+            cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+            selection_end = cursor.position()
+            cursor.endEditBlock()
+
+            cursor.setPosition(selection_start)
+            cursor.setPosition(selection_end, QTextCursor.MoveMode.KeepAnchor)
+            self.setTextCursor(cursor)
+            return
+
         cursor = self.textCursor()
         
         # Save cursor position within line
