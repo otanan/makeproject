@@ -45,6 +45,7 @@ from .editors import CodeEditor
 from .update_dialog import UpdateDialog
 from .template_paths_dialog import TemplatePathsDialog
 from .unsaved_changes_dialog import UnsavedChangesDialog
+from .empty_title_dialog import EmptyTitleDialog
 from .dialog_utils import style_default_dialog_button
 
 
@@ -1253,6 +1254,10 @@ class MakeProjectWindow(QMainWindow):
             self.yaml_editor.set_error_line(self._extract_error_line(error))
             QMessageBox.warning(self, "Invalid YAML", error)
             return
+        if not self.details_panel.get_title().strip():
+            dialog = EmptyTitleDialog(self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
 
         output_dir = QFileDialog.getExistingDirectory(
             self,

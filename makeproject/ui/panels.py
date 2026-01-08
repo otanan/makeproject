@@ -965,6 +965,9 @@ class PreviewPanel(QFrame):
         is_placeholder = item.data(0, Qt.ItemDataRole.UserRole + 2)
         if is_placeholder:
             return
+        is_folder = item.data(0, Qt.ItemDataRole.UserRole + 1)
+        if is_folder:
+            item.setExpanded(not item.isExpanded())
         self._update_content_for_item(item)
 
     def _on_current_item_changed(self, current: QTreeWidgetItem, previous: QTreeWidgetItem):
