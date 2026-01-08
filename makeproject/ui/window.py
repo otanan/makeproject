@@ -385,6 +385,7 @@ class MakeProjectWindow(QMainWindow):
         self.file_templates_panel.template_delete_requested.connect(
             self._on_file_template_delete_requested
         )
+        self.file_templates_panel.templates_changed.connect(self._schedule_preview_update)
 
         self.custom_tokens_panel.tokens_changed.connect(self._schedule_preview_update)
         self.custom_tokens_panel.token_action.connect(self._on_custom_token_action)
@@ -1160,7 +1161,27 @@ class MakeProjectWindow(QMainWindow):
                 return index
         return None
 
+    def _find_line_for_key(self, yaml_text: str, key: str) -> int | None:
+        if not key:
+            return None
+        token_match = re.search(r'[mM][pP]\s*:\s*([^\}\s]+)', key)
+        if token_match:
+            token_line = self._find_token_line(yaml_text, token_match.group(1))
+            if token_line:
+                return token_line
+        for index, line in enumerate(yaml_text.splitlines(), start=1):
+            if key in line:
+                return index
+        return None
+
+    def _ensure_line_in_message(self, message: str, line: int | None) -> str:
+        if line and not re.search(r'line\s+\d+', message, re.IGNORECASE):
+            return f"{message} (line {line})"
+        return message
+
     def _describe_yaml_error(self, exc: Exception, yaml_text: str) -> tuple[str, int | None]:
+        if isinstance(exc, YAMLParseError) and exc.template_name:
+            return str(exc), None
         if isinstance(exc, YAMLParseError):
             message = exc.message
             line = exc.line
@@ -1176,8 +1197,19 @@ class MakeProjectWindow(QMainWindow):
             if token_match:
                 token_name = token_match.group(1)
                 line = self._find_token_line(yaml_text, token_name)
-                if line:
-                    message = f'Unknown token "{token_name}" on line {line}.'
+                message = f'Unknown token "{token_name}".'
+
+        if line is None:
+            shorthand_match = re.search(
+                r'Invalid shorthand folder for "([^"]+)"',
+                message,
+            )
+            if shorthand_match:
+                key = shorthand_match.group(1)
+                line = self._find_line_for_key(yaml_text, key)
+                message = f'Invalid shorthand folder for "{key}".'
+
+        message = self._ensure_line_in_message(message, line)
         return message, line
 
     def _update_preview(self):

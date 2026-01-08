@@ -990,6 +990,7 @@ class FileTemplatesPanel(QFrame):
 
     insert_reference = pyqtSignal(str)
     template_delete_requested = pyqtSignal(str)
+    templates_changed = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1276,6 +1277,7 @@ class FileTemplatesPanel(QFrame):
         self._reset_editor_scroll()
         self.reference_label.setText(f"Reference: template: {new_name}")
         self.refresh_list()
+        self.templates_changed.emit()
 
     def _show_in_finder(self, name: str):
         path = None
@@ -1451,6 +1453,7 @@ class FileTemplatesPanel(QFrame):
         self._drafts.pop(self._current_template, None)
         self.reference_label.setText(f"Reference: template: {self._current_template}")
         self.refresh_list()
+        self.templates_changed.emit()
 
     def save_current_template(self):
         self._save_template()
@@ -1508,16 +1511,20 @@ class FileTemplatesPanel(QFrame):
 
     def save_all_unsaved(self):
         """Persist all cached file template drafts to disk."""
+        changed = False
         if self._current_template and self._has_unsaved_changes:
             self._drafts[self._current_template] = self.editor.toPlainText()
         for name, content in list(self._drafts.items()):
             library.save_file_template(name, content)
+            changed = True
             if name == self._current_template:
                 self._original_content = content
                 self._has_unsaved_changes = False
                 self.reference_label.setText(f"Reference: template: {name}")
             self._drafts.pop(name, None)
         self.refresh_list()
+        if changed:
+            self.templates_changed.emit()
 
     def _delete_template(self, name: str):
         """Delete a file template with slide animation."""
@@ -1545,6 +1552,7 @@ class FileTemplatesPanel(QFrame):
                         self.editor.clear()
                         self.reference_label.setText("Reference: template: <name>")
                     self.refresh_list()
+                    self.templates_changed.emit()
 
                 animation.finished.connect(on_finished)
                 animation.start()
@@ -1561,6 +1569,7 @@ class FileTemplatesPanel(QFrame):
             self.editor.clear()
             self.reference_label.setText("Reference: template: <name>")
         self.refresh_list()
+        self.templates_changed.emit()
 
     def _insert_reference(self):
         if self._current_template:

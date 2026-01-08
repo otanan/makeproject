@@ -42,18 +42,75 @@ class TokenContext(dict):
 
 class YAMLParseError(Exception):
     """Exception for YAML parsing errors with line numbers."""
-    def __init__(self, message: str, line: int = None):
+    def __init__(
+        self,
+        message: str,
+        line: int = None,
+        template_name: str | None = None,
+        template_line: int | None = None,
+    ):
         self.line = line
+        self.template_name = template_name
+        self.template_line = template_line
         self.message = message
-        if line:
+        if template_name and template_line:
+            super().__init__(
+                f'{message} (template "{template_name}", line {template_line})'
+            )
+        elif line:
             super().__init__(f"{message} (line {line})")
         else:
             super().__init__(message)
 
 
+def _normalize_implicit_token_keys(text: str) -> str:
+    """Quote implicit folder keys that are token placeholders (e.g., - {mp:title}:)."""
+    lines = []
+    token_line = re.compile(
+        r'^(\s*-\s*)\{([mM][pP]\s*:[^}]+)\}(\s*:\s*)(.*)$'
+    )
+    for line in text.splitlines():
+        match = token_line.match(line)
+        if match:
+            prefix, token, sep, rest = match.groups()
+            lines.append(f'{prefix}"{{{token.strip()}}}"{sep}{rest}')
+        else:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def _normalize_implicit_token_items(text: str) -> str:
+    """Quote implicit file items that start with a token placeholder."""
+    lines = []
+    token_item = re.compile(
+        r'^(\s*-\s*)(\{[mM][pP]\s*:[^}]+\}[^#]*?)(\s*(?:#.*)?)$'
+    )
+    token_key = re.compile(
+        r'^\s*-\s*\{[mM][pP]\s*:[^}]+\}\s*:\s*(#.*)?$'
+    )
+    for line in text.splitlines():
+        if token_key.match(line):
+            lines.append(line)
+            continue
+        match = token_item.match(line)
+        if match:
+            prefix, value, suffix = match.groups()
+            stripped = value.strip()
+            if stripped.startswith(('"', "'")):
+                lines.append(line)
+                continue
+            escaped = stripped.replace("\\", "\\\\").replace('"', '\\"')
+            lines.append(f'{prefix}"{escaped}"{suffix}')
+        else:
+            lines.append(line)
+    return "\n".join(lines)
+
+
 def preprocess_yaml(text: str) -> str:
     """Preprocess YAML text: convert tabs to 2 spaces."""
-    return text.replace('\t', '  ')
+    text = text.replace('\t', '  ')
+    text = _normalize_implicit_token_keys(text)
+    return _normalize_implicit_token_items(text)
 
 
 def parse_yaml(text: str) -> Tuple[Optional[Dict], Optional[str]]:
@@ -73,7 +130,91 @@ def parse_yaml(text: str) -> Tuple[Optional[Dict], Optional[str]]:
         
         if line:
             return None, f"Invalid YAML on line {line}"
-        return None, f"Invalid YAML: {str(e)}"
+    return None, f"Invalid YAML: {str(e)}"
+
+
+def _extract_error_line(message: str) -> int | None:
+    match = re.search(r'line\s+(\d+)', message, re.IGNORECASE)
+    if match:
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
+    return None
+
+
+def _find_token_line_in_text(text: str, token_name: str) -> int | None:
+    if not token_name:
+        return None
+    token_re = re.compile(
+        r'\{[mM][pP]\s*:\s*[^}]*\b' + re.escape(token_name) + r'\b',
+        re.IGNORECASE,
+    )
+    alt_re = re.compile(
+        r'\bmp\s*:\s*' + re.escape(token_name) + r'\b',
+        re.IGNORECASE,
+    )
+    for index, line in enumerate(text.splitlines(), start=1):
+        if token_re.search(line) or alt_re.search(line):
+            return index
+    return None
+
+
+def _find_key_line_in_text(text: str, key: str) -> int | None:
+    if not key:
+        return None
+    token_match = re.search(r'[mM][pP]\s*:\s*([^\}\s]+)', key)
+    if token_match:
+        token_line = _find_token_line_in_text(text, token_match.group(1))
+        if token_line:
+            return token_line
+    for index, line in enumerate(text.splitlines(), start=1):
+        if key in line:
+            return index
+    return None
+
+
+def _decorate_template_error(
+    exc: Exception,
+    template_name: str,
+    template_text: str,
+    template_kind: str,
+) -> YAMLParseError:
+    if not isinstance(exc, YAMLParseError):
+        return YAMLParseError(
+            str(exc),
+            template_name=template_name,
+            template_line=None,
+        )
+    if exc.template_name:
+        return exc
+
+    message = exc.message
+    template_line = None
+
+    token_match = re.search(r'Unknown token "([^"]+)"', message)
+    if token_match:
+        token_name = token_match.group(1)
+        template_line = _find_token_line_in_text(template_text, token_name)
+        message = f'Unknown token "{token_name}" in {template_kind} "{template_name}".'
+    else:
+        shorthand_match = re.search(
+            r'Invalid shorthand folder for "([^"]+)"',
+            message,
+        )
+        if shorthand_match:
+            key = shorthand_match.group(1)
+            template_line = _find_key_line_in_text(template_text, key)
+            message = f'Invalid shorthand folder for "{key}" in {template_kind} "{template_name}".'
+
+    if template_line is None and exc.line:
+        template_line = exc.line
+
+    return YAMLParseError(
+        message,
+        template_name=template_name,
+        template_line=template_line,
+    )
 
 
 def build_token_context(yaml_data: Optional[Any], title: str = "", description: str = "") -> TokenContext:
@@ -211,11 +352,12 @@ def sanitize_filename(name: str) -> str:
     for char in invalid_chars:
         name = name.replace(char, '_')
     
-    # Remove leading/trailing whitespace and dots
-    name = name.strip().strip('.')
+    # Remove leading/trailing whitespace and trailing dots
+    name = name.strip()
+    name = name.rstrip('.')
     
     # Ensure non-empty
-    if not name:
+    if not name or name in (".", ".."):
         name = "Untitled"
     
     return name
@@ -350,11 +492,24 @@ def _process_file_item(item: Any, context: Dict[str, str], include_stack: List[s
             raise YAMLParseError(f'Project template "{template_name}" not found.')
         data, error = parse_yaml(content)
         if error:
-            raise YAMLParseError(f'Invalid YAML in project template "{template_name}": {error}')
+            template_line = _extract_error_line(error)
+            raise YAMLParseError(
+                f'Invalid YAML in project template "{template_name}": {error}',
+                template_name=template_name,
+                template_line=template_line,
+            )
         file_items = _extract_file_items(data)
         if file_items is None:
             raise YAMLParseError(f'Project template "{template_name}" has no file list.')
-        return _collect_nodes(file_items, context, include_stack + [template_name])
+        try:
+            return _collect_nodes(file_items, context, include_stack + [template_name])
+        except Exception as exc:
+            raise _decorate_template_error(
+                exc,
+                template_name,
+                content,
+                "project template",
+            ) from exc
     
     if 'file' in item:
         # It's a file
@@ -368,7 +523,15 @@ def _process_file_item(item: Any, context: Dict[str, str], include_stack: List[s
         elif 'template' in item:
             template_name = item['template']
             template_content = get_file_template_content(template_name)
-            content = substitute_tokens(template_content, context)
+            try:
+                content = substitute_tokens(template_content, context)
+            except Exception as exc:
+                raise _decorate_template_error(
+                    exc,
+                    template_name,
+                    template_content,
+                    "file template",
+                ) from exc
         
         return [FileNode(name=filename, content=content, is_folder=False)]
     
