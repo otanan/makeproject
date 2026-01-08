@@ -9,11 +9,13 @@ MakeProject is a macOS desktop app for building project folders from YAML templa
 - Token substitution across YAML and file templates.
 - Custom tokens managed in-app.
 - Optional Python blocks inside YAML for dynamic generation.
+- Python-backed custom tokens (same `{mp:token}` syntax).
 - Preview tree before generation.
 - Conflict handling when generating into existing folders.
 - Automatic update checks and in-app updater.
 - Theme toggle.
 - Configurable template storage locations.
+- Roadmap: https://otanan.notion.site/makeproject
 
 ## Install (macOS)
 
@@ -46,10 +48,11 @@ Project templates are YAML files that describe the folder structure and file con
 
 - folder: src
   contents:
-    - file: main.py
-      template: main.py
+    - file_template: main.py
     - folder: tests
 ```
+
+`file_template` is shorthand for using the same name for the file and its template.
 
 ### Implicit folder syntax
 
@@ -67,7 +70,12 @@ Project templates are YAML files that describe the folder structure and file con
 
 ```yaml
 - project_template: base-web-app
+- project_template: base-web-app
+  title: {mp:title} API
+  description: Backend portion of {mp:title}.
 ```
+
+You can override `title` and `description` when including another project template.
 
 ### Python-driven items
 
@@ -110,6 +118,7 @@ Use them like this:
   template: main.py
 - file: quiz_01.tex
   template: teaching/quiz.tex
+- file_template: appendix.tex
 ```
 
 ### Example file template
@@ -139,8 +148,8 @@ Built-in tokens:
 Custom tokens:
 
 Use the Custom Tokens panel to add your own (for example, `email`), then reference them with `{mp:email}`.
-Custom tokens can also be marked as Python; the app evaluates them when referenced with `{mp:name}`.
-Single-line values are treated as expressions, multi-line values are treated as blocks.
+Custom tokens can also be marked as Python; the app evaluates them when referenced with `{mp:name}` (same syntax as text tokens).
+Single-line Python values are treated as expressions, multi-line values are treated as blocks.
 
 Python tokens:
 

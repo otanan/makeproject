@@ -543,6 +543,8 @@ class MakeProjectWindow(QMainWindow):
         last_template = library.get_preference("last_template")
         if last_template == old_name:
             library.set_preference("last_template", new_name)
+        if self.project_templates_panel.is_current_template(new_name):
+            self.preview_panel.set_project_name(new_name)
 
     def _on_project_template_delete_requested(self, name: str):
         if self._history_suspended:
@@ -972,6 +974,7 @@ class MakeProjectWindow(QMainWindow):
         self._set_yaml_text(DEFAULT_YAML, block_signals=False)
         self.details_panel.title_input.clear()
         self.details_panel.desc_input.clear()
+        self.preview_panel.set_project_name(self.project_templates_panel.get_template_name())
         self._show_status("New project created")
 
     def _open_project(self):
@@ -986,6 +989,7 @@ class MakeProjectWindow(QMainWindow):
             try:
                 content = Path(path).read_text(encoding="utf-8")
                 self._set_yaml_text(content, block_signals=False)
+                self.preview_panel.set_project_name(self.project_templates_panel.get_template_name())
                 self._show_status(f"Opened: {Path(path).name}")
             except Exception as e:
                 QMessageBox.warning(self, "Error", f"Failed to open file: {e}")
@@ -1016,6 +1020,7 @@ class MakeProjectWindow(QMainWindow):
         library.save_project_template(name, content)
         self._project_template_drafts.pop(name, None)
         self.project_templates_panel.mark_saved(name, content)
+        self.preview_panel.set_project_name(name)
         self._show_status(f"Saved: {name}")
 
     def _save_project_as(self):
@@ -1035,6 +1040,7 @@ class MakeProjectWindow(QMainWindow):
         """Start a new project template with default YAML."""
         self._stash_current_project_template()
         self._set_yaml_text(DEFAULT_YAML, block_signals=False)
+        self.preview_panel.set_project_name(self.project_templates_panel.get_template_name())
 
     def _clear_project_view(self):
         """Clear all project-specific panels (no template selected)."""
@@ -1044,6 +1050,7 @@ class MakeProjectWindow(QMainWindow):
         self.preview_panel.tree.clear()
         self.preview_panel.content_view.clear()
         self.preview_panel.status_label.setText("")
+        self.preview_panel.set_project_name(None)
         library.set_preference("last_template", None)
 
     def _stash_current_project_template(self):
@@ -1088,6 +1095,7 @@ class MakeProjectWindow(QMainWindow):
             self._set_yaml_text(editor_content, block_signals=True)
             self.project_templates_panel.mark_unsaved_changes(editor_content)
             self._schedule_preview_update()
+            self.preview_panel.set_project_name(name)
             self._show_status(f"Loaded: {name}")
             library.set_preference("last_template", name)
 

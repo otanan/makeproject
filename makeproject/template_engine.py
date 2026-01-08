@@ -24,6 +24,7 @@ class FileNode:
     content: str = ""
     is_folder: bool = False
     children: List['FileNode'] = field(default_factory=list)
+    source_template: str | None = None
     
     def file_count(self) -> int:
         """Count total files (not folders) in this subtree."""
@@ -248,6 +249,15 @@ def build_token_context(yaml_data: Optional[Any], title: str = "", description: 
     return context
 
 
+def _with_context_overrides(context: Dict[str, str], overrides: Dict[str, str]) -> TokenContext:
+    python_tokens = getattr(context, "python_tokens", {})
+    new_context = TokenContext(context, python_tokens=python_tokens.copy())
+    for key, value in overrides.items():
+        new_context[key] = value
+        new_context[key.lower()] = value
+    return new_context
+
+
 def substitute_tokens(text: str, context: Dict[str, str]) -> str:
     """
     Substitute tokens in text.
@@ -381,21 +391,36 @@ def _extract_file_items(yaml_data: Optional[Any]) -> Optional[List[Any]]:
     return None
 
 
-def _collect_nodes(items: List[Any], context: Dict[str, str], include_stack: List[str]) -> List[FileNode]:
+def _collect_nodes(
+    items: List[Any],
+    context: Dict[str, str],
+    include_stack: List[str],
+    source_template: str | None = None,
+) -> List[FileNode]:
     """Process a list of YAML items into file nodes."""
     nodes: List[FileNode] = []
     for item in items:
         if isinstance(item, str):
             filename = substitute_tokens(item, context)
             filename = sanitize_filename(filename)
-            nodes.append(FileNode(name=filename, content="", is_folder=False))
+            nodes.append(FileNode(
+                name=filename,
+                content="",
+                is_folder=False,
+                source_template=source_template,
+            ))
             continue
         if isinstance(item, dict) and "python" in item:
             code = _normalize_token_value(item["python"])
             items_from_code = _run_python_items(code, context, "python")
-            nodes.extend(_collect_nodes(items_from_code, context, include_stack))
+            nodes.extend(_collect_nodes(
+                items_from_code,
+                context,
+                include_stack,
+                source_template=source_template,
+            ))
             continue
-        nodes.extend(_process_file_item(item, context, include_stack))
+        nodes.extend(_process_file_item(item, context, include_stack, source_template))
     return nodes
 
 
@@ -472,7 +497,12 @@ def _run_python_items(code: str, context: Dict[str, str], template_name: str) ->
     return items
 
 
-def _process_file_item(item: Any, context: Dict[str, str], include_stack: List[str]) -> List[FileNode]:
+def _process_file_item(
+    item: Any,
+    context: Dict[str, str],
+    include_stack: List[str],
+    source_template: str | None = None,
+) -> List[FileNode]:
     """Process a single file/folder item from the YAML."""
     if not isinstance(item, dict):
         return []
@@ -501,8 +531,27 @@ def _process_file_item(item: Any, context: Dict[str, str], include_stack: List[s
         file_items = _extract_file_items(data)
         if file_items is None:
             raise YAMLParseError(f'Project template "{template_name}" has no file list.')
+        overrides = {}
+        if "title" in item:
+            overrides["title"] = substitute_tokens(
+                _normalize_token_value(item["title"]),
+                context,
+            )
+        if "description" in item:
+            overrides["description"] = substitute_tokens(
+                _normalize_token_value(item["description"]),
+                context,
+            )
+        include_context = (
+            _with_context_overrides(context, overrides) if overrides else context
+        )
         try:
-            return _collect_nodes(file_items, context, include_stack + [template_name])
+            return _collect_nodes(
+                file_items,
+                include_context,
+                include_stack + [template_name],
+                source_template=template_name,
+            )
         except Exception as exc:
             raise _decorate_template_error(
                 exc,
@@ -511,6 +560,30 @@ def _process_file_item(item: Any, context: Dict[str, str], include_stack: List[s
                 "project template",
             ) from exc
     
+    if 'file_template' in item:
+        filename_value = _normalize_token_value(item['file_template'])
+        filename = substitute_tokens(filename_value, context)
+        filename = sanitize_filename(filename)
+        template_name = substitute_tokens(filename_value, context).strip()
+        if not template_name:
+            return []
+        template_content = get_file_template_content(template_name)
+        try:
+            content = substitute_tokens(template_content, context)
+        except Exception as exc:
+            raise _decorate_template_error(
+                exc,
+                template_name,
+                template_content,
+                "file template",
+            ) from exc
+        return [FileNode(
+            name=filename,
+            content=content,
+            is_folder=False,
+            source_template=source_template,
+        )]
+
     if 'file' in item:
         # It's a file
         filename = substitute_tokens(_normalize_token_value(item['file']), context)
@@ -533,19 +606,33 @@ def _process_file_item(item: Any, context: Dict[str, str], include_stack: List[s
                     "file template",
                 ) from exc
         
-        return [FileNode(name=filename, content=content, is_folder=False)]
+        return [FileNode(
+            name=filename,
+            content=content,
+            is_folder=False,
+            source_template=source_template,
+        )]
     
     elif 'folder' in item:
         # It's a folder
         foldername = substitute_tokens(_normalize_token_value(item['folder']), context)
         foldername = sanitize_filename(foldername)
         
-        folder = FileNode(name=foldername, is_folder=True)
+        folder = FileNode(
+            name=foldername,
+            is_folder=True,
+            source_template=source_template,
+        )
         
         # Process contents
         contents = item.get('contents', [])
         if isinstance(contents, list):
-            folder.children.extend(_collect_nodes(contents, context, include_stack))
+            folder.children.extend(_collect_nodes(
+                contents,
+                context,
+                include_stack,
+                source_template=source_template,
+            ))
 
         return [folder]
 
@@ -562,8 +649,17 @@ def _process_file_item(item: Any, context: Dict[str, str], include_stack: List[s
         folder_key = substitute_tokens(key_text, context)
         if isinstance(value, list):
             foldername = sanitize_filename(folder_key)
-            folder = FileNode(name=foldername, is_folder=True)
-            folder.children.extend(_collect_nodes(value, context, include_stack))
+            folder = FileNode(
+                name=foldername,
+                is_folder=True,
+                source_template=source_template,
+            )
+            folder.children.extend(_collect_nodes(
+                value,
+                context,
+                include_stack,
+                source_template=source_template,
+            ))
             return [folder]
         raise YAMLParseError(f'Invalid shorthand folder for "{key}".')
 
@@ -663,6 +759,7 @@ DEFAULT_YAML = '''# Example project template.
 #   contents: nested items inside a folder
 # - content: inline file contents (supports {mp:token})
 # - template: reference a File Template by name
+# - file_template: shorthand for file + template using the same name
 # - project_template: include another Project Template by name
 # - python: run python code that returns or prints a YAML list
 - file: README.md

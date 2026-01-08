@@ -433,6 +433,12 @@ class ProjectTemplatesPanel(QFrame):
         self.save_requested.emit()
 
     def _on_new_name_canceled(self, old_name: str):
+        if self._editing_new and not self._draft_name_seed:
+            pending_name = self.get_template_name().strip()
+            if not pending_name:
+                self._draft_name_seed = ""
+                self._on_new_name_confirmed(old_name, "untitled project")
+                return
         self._draft_name_seed = ""
         self._editing_new = False
         self.refresh_list()
@@ -707,10 +713,10 @@ class PreviewPanel(QFrame):
 
         header_layout = QHBoxLayout()
 
-        header_label = QLabel("PREVIEW")
-        header_label.setProperty("class", "panelHeader")
-        header_label.setToolTip("Preview of the generated project structure")
-        header_layout.addWidget(header_label)
+        self.header_label = QLabel("PREVIEW")
+        self.header_label.setProperty("class", "panelHeader")
+        self.header_label.setToolTip("Preview of the generated project structure")
+        header_layout.addWidget(self.header_label)
 
         header_layout.addStretch()
 
@@ -753,6 +759,12 @@ class PreviewPanel(QFrame):
 
         self._file_contents = {}
         self._expansion_states = {}
+
+    def set_project_name(self, name: str | None):
+        if name:
+            self.header_label.setText(f"PREVIEW - {name.upper()}")
+        else:
+            self.header_label.setText("PREVIEW")
 
     def update_tree(self, root_node, error_message: str = None):
         """Update the preview tree with file nodes."""
@@ -802,6 +814,11 @@ class PreviewPanel(QFrame):
             full_path = f"{parent_path}/{node.name}".lstrip("/")
             item.setData(0, Qt.ItemDataRole.UserRole, full_path)
             item.setData(0, Qt.ItemDataRole.UserRole + 1, node.is_folder)
+            if node.source_template:
+                item.setForeground(0, QColor("#1ABC9D"))
+                font = item.font(0)
+                font.setBold(True)
+                item.setFont(0, font)
 
             if parent_item:
                 parent_item.addChild(item)
