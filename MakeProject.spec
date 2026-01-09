@@ -17,7 +17,7 @@ a = Analysis(
         ('makeproject/styles_dark.qss', 'makeproject'),
         ('makeproject/styles_light.qss', 'makeproject'),
     ],
-    hiddenimports=[],
+    hiddenimports=["pkgutil"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

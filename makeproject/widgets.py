@@ -202,6 +202,11 @@ class IndentTextEdit(QPlainTextEdit):
                                                 self.line_number_area_width(), 
                                                 cr.height()))
         self._position_placeholder()
+
+    def showEvent(self, event):
+        """Ensure placeholder visibility updates when the editor becomes visible."""
+        super().showEvent(event)
+        self._update_placeholder_visibility()
     
     def line_number_area_paint_event(self, event):
         """Paint the line numbers in the gutter."""
@@ -361,13 +366,13 @@ class IndentTextEdit(QPlainTextEdit):
         self._placeholder_label.setFont(self.font())
 
     def _update_placeholder_visibility(self):
-        show = bool(self._placeholder_text) and not self.toPlainText()
+        show = bool(self._placeholder_text) and not self.toPlainText().strip()
         self._placeholder_label.setVisible(show)
         if show:
             QTimer.singleShot(0, self._position_placeholder)
 
     def _position_placeholder(self):
-        if not self._placeholder_label.isVisible():
+        if not self._placeholder_text:
             return
         margin = 8
         available = max(1, self.viewport().width() - (margin * 2))

@@ -29,6 +29,7 @@ class CodeEditor(IndentTextEdit):
         self._highlighter = None
         if highlighter_cls:
             self._highlighter = highlighter_cls(self.document(), dark_mode=dark_mode)
+        self.set_dark_mode(dark_mode)
 
     def set_dark_mode(self, dark_mode):
         self._dark_mode = dark_mode

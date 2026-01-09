@@ -70,7 +70,6 @@ Project templates are YAML files that describe the folder structure and file con
 
 ```yaml
 - project_template: base-web-app
-- project_template: base-web-app
   title: {mp:title} API
   description: Backend portion of {mp:title}.
 ```
@@ -145,6 +144,14 @@ Built-in tokens:
 - `title` (Project title)
 - `description` (Project description)
 
+Context dict keys (available in Python tokens as `context["key"]`):
+
+- `title`, `description` (built-in)
+- Custom tokens by name (case-insensitive)
+- File-scoped keys for file content and file templates only: `filename` (e.g. `foo.txt`), `file_stem` (e.g. `foo`), `file_ext` (e.g. `.txt`)
+
+All keys are added with lowercase aliases for case-insensitive lookups.
+
 Custom tokens:
 
 Use the Custom Tokens panel to add your own (for example, `email`), then reference them with `{mp:email}`.
@@ -154,6 +161,13 @@ Single-line Python values are treated as expressions, multi-line values are trea
 Python tokens:
 
 Use `{mp.py: expression}` for a single expression, or `{mp.py| ... }` for a code block. The expression result is inserted as text. The block should return or print a value.
+
+## Python Settings
+
+The Settings window includes a Python Settings tab:
+
+- Python interpreter path (defaults to the app's Python interpreter).
+- Python Preamble: code that runs before every Python expression or block during generation, so you can define helpers or shared variables.
 
 ## Generating Projects
 

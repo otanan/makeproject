@@ -698,6 +698,10 @@ class MakeProjectWindow(QMainWindow):
         project_path = library.get_project_templates_dir()
         file_path = library.get_file_templates_dir()
         custom_tokens_path = library.get_custom_tokens_path()
+        python_interpreter_path = library.get_python_interpreter_path()
+        python_preamble = library.get_python_preamble()
+        old_python_interpreter_path = python_interpreter_path
+        old_python_preamble = python_preamble or ""
         dialog = TemplatePathsDialog(
             project_path,
             file_path,
@@ -705,7 +709,11 @@ class MakeProjectWindow(QMainWindow):
             library.DEFAULT_PROJECT_TEMPLATES_DIR,
             library.DEFAULT_FILE_TEMPLATES_DIR,
             library.CUSTOM_TOKENS_PATH,
-            self,
+            python_interpreter_path,
+            library.DEFAULT_PYTHON_INTERPRETER,
+            python_preamble,
+            dark_mode=self._dark_mode,
+            parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -722,6 +730,11 @@ class MakeProjectWindow(QMainWindow):
             dialog.custom_tokens_path_text(),
             library.CUSTOM_TOKENS_PATH,
         )
+        new_python_interpreter_path = self._normalize_python_interpreter_path(
+            dialog.python_interpreter_text(),
+            library.DEFAULT_PYTHON_INTERPRETER,
+        )
+        new_python_preamble = dialog.python_preamble_text()
 
         if not self._validate_template_path(new_project_path, "Project templates"):
             return
@@ -729,6 +742,10 @@ class MakeProjectWindow(QMainWindow):
             return
         if not self._validate_custom_tokens_path(
             new_custom_tokens_path, "Custom tokens"
+        ):
+            return
+        if not self._validate_python_interpreter_path(
+            new_python_interpreter_path, "Python interpreter"
         ):
             return
         if not self._ensure_template_dir(new_project_path, "Project templates"):
@@ -742,11 +759,34 @@ class MakeProjectWindow(QMainWindow):
         old_file_path = library.get_file_templates_dir()
         old_custom_tokens_path = library.get_custom_tokens_path()
 
-        if (
+        interpreter_text = dialog.python_interpreter_text()
+        python_interpreter_changed = True
+        try:
+            python_interpreter_changed = (
+                new_python_interpreter_path.resolve()
+                != old_python_interpreter_path.resolve()
+            )
+        except Exception:
+            python_interpreter_changed = (
+                str(new_python_interpreter_path) != str(old_python_interpreter_path)
+            )
+        python_settings_changed = (
+            python_interpreter_changed or new_python_preamble != old_python_preamble
+        )
+        if interpreter_text:
+            library.set_python_interpreter_path(new_python_interpreter_path)
+        else:
+            library.set_python_interpreter_path(None)
+        library.set_python_preamble(new_python_preamble)
+
+        template_paths_changed = not (
             old_project_path.resolve() == new_project_path.resolve()
             and old_file_path.resolve() == new_file_path.resolve()
             and old_custom_tokens_path.resolve() == new_custom_tokens_path.resolve()
-        ):
+        )
+        if not template_paths_changed:
+            if python_settings_changed:
+                self._schedule_preview_update()
             return
 
         if self._has_any_unsaved_changes():
@@ -758,6 +798,8 @@ class MakeProjectWindow(QMainWindow):
                 | QMessageBox.StandardButton.Cancel,
             )
             if decision != QMessageBox.StandardButton.Save:
+                if python_settings_changed:
+                    self._schedule_preview_update()
                 return
             self._save_all_changes()
 
@@ -786,6 +828,7 @@ class MakeProjectWindow(QMainWindow):
         self.custom_tokens_panel.clear_all_state()
         if self.custom_tokens_panel.has_tokens():
             self.custom_tokens_panel.select_first_token()
+        self._schedule_preview_update()
 
     def _normalize_template_path(self, raw_path: str, default_path: Path) -> Path:
         if not raw_path:
@@ -793,6 +836,13 @@ class MakeProjectWindow(QMainWindow):
         return Path(raw_path).expanduser().resolve()
 
     def _normalize_custom_tokens_path(
+        self, raw_path: str, default_path: Path
+    ) -> Path:
+        if not raw_path:
+            return default_path
+        return Path(raw_path).expanduser().resolve()
+
+    def _normalize_python_interpreter_path(
         self, raw_path: str, default_path: Path
     ) -> Path:
         if not raw_path:
@@ -815,6 +865,23 @@ class MakeProjectWindow(QMainWindow):
                 self,
                 "Invalid File",
                 f"{label} path must be a file.\n\n{path}",
+            )
+            return False
+        return True
+
+    def _validate_python_interpreter_path(self, path: Path, label: str) -> bool:
+        if path.exists() and path.is_dir():
+            QMessageBox.warning(
+                self,
+                "Invalid File",
+                f"{label} path must be an executable file.\n\n{path}",
+            )
+            return False
+        if not path.exists():
+            QMessageBox.warning(
+                self,
+                "File Not Found",
+                f"{label} path does not exist.\n\n{path}",
             )
             return False
         return True

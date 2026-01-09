@@ -4,6 +4,7 @@ Handles storage in ~/Library/Application Support/MakeProject/
 """
 
 import os
+import sys
 import yaml
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -18,6 +19,9 @@ PREFERENCES_PATH = APP_SUPPORT_DIR / "preferences.yaml"
 UPDATES_DIR = APP_SUPPORT_DIR / "updates"
 APP_OPENED_PREF_KEY = "app_opened"
 CUSTOM_TOKENS_PREF_KEY = "custom_tokens_path"
+PYTHON_INTERPRETER_PREF_KEY = "python_interpreter_path"
+PYTHON_PREAMBLE_PREF_KEY = "python_preamble"
+DEFAULT_PYTHON_INTERPRETER = Path(sys.executable)
 
 # Default file templates seeded on first run (use actual file extensions)
 DEFAULT_FILE_TEMPLATES = {
@@ -153,6 +157,43 @@ def set_template_paths(project_templates_dir: Path, file_templates_dir: Path):
     prefs = load_preferences()
     prefs["project_templates_dir"] = str(project_templates_dir)
     prefs["file_templates_dir"] = str(file_templates_dir)
+    save_preferences(prefs)
+
+
+def get_python_interpreter_path() -> Path:
+    """Return the Python interpreter path, honoring user preferences."""
+    prefs = load_preferences()
+    path_value = prefs.get(PYTHON_INTERPRETER_PREF_KEY)
+    if isinstance(path_value, str) and path_value.strip():
+        return Path(path_value).expanduser()
+    return DEFAULT_PYTHON_INTERPRETER
+
+
+def set_python_interpreter_path(python_interpreter_path: Optional[Path]):
+    """Persist the Python interpreter path preference."""
+    prefs = load_preferences()
+    if python_interpreter_path is None:
+        prefs.pop(PYTHON_INTERPRETER_PREF_KEY, None)
+    else:
+        path_value = str(python_interpreter_path).strip()
+        if path_value:
+            prefs[PYTHON_INTERPRETER_PREF_KEY] = path_value
+        else:
+            prefs.pop(PYTHON_INTERPRETER_PREF_KEY, None)
+    save_preferences(prefs)
+
+
+def get_python_preamble() -> str:
+    """Return the Python preamble code, honoring user preferences."""
+    prefs = load_preferences()
+    value = prefs.get(PYTHON_PREAMBLE_PREF_KEY)
+    return value if isinstance(value, str) else ""
+
+
+def set_python_preamble(preamble: str):
+    """Persist the Python preamble code."""
+    prefs = load_preferences()
+    prefs[PYTHON_PREAMBLE_PREF_KEY] = preamble if isinstance(preamble, str) else ""
     save_preferences(prefs)
 
 

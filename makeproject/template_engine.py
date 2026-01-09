@@ -266,20 +266,34 @@ def substitute_tokens(text: str, context: Dict[str, str]) -> str:
     - {mp.py: <expr>} evaluates a Python expression
     - {mp.py|<code>} executes Python code (multi-line supported)
     """
+    python_preamble = library.get_python_preamble()
+    has_preamble = isinstance(python_preamble, str) and python_preamble.strip()
+
     def run_python(code: str, is_expression: bool):
-        globals_dict = {"__builtins__": __builtins__}
-        locals_dict = {"context": context}
+        exec_context = {"__builtins__": __builtins__, "context": context}
+
+        if has_preamble:
+            try:
+                with redirect_stdout(io.StringIO()):
+                    exec(python_preamble, exec_context, exec_context)
+            except Exception as exc:
+                raise RuntimeError(f"Python preamble error: {exc}") from exc
 
         if is_expression:
-            result = eval(code, globals_dict, locals_dict)
-            return "" if result is None else str(result)
+            output = io.StringIO()
+            with redirect_stdout(output):
+                result = eval(code, exec_context, exec_context)
+            if result is None:
+                stdout_value = output.getvalue()
+                return stdout_value.rstrip("\n") if stdout_value else ""
+            return str(result)
 
         output = io.StringIO()
         with redirect_stdout(output):
-            exec(code, globals_dict, locals_dict)
+            exec(code, exec_context, exec_context)
         stdout_value = output.getvalue()
-        if "result" in locals_dict:
-            return locals_dict.get("result")
+        if "result" in exec_context:
+            return exec_context.get("result")
         if stdout_value:
             return stdout_value.rstrip("\n")
         return None
@@ -467,17 +481,25 @@ def _normalize_token_value(value: Any) -> str:
 def _run_python_items(code: str, context: Dict[str, str], template_name: str) -> List[Any]:
     """Execute python block and return a list of YAML items."""
     code = textwrap.dedent(code).strip("\n")
-    globals_dict = {"__builtins__": __builtins__}
-    locals_dict = {"context": context}
+    exec_context = {"__builtins__": __builtins__, "context": context}
+    python_preamble = library.get_python_preamble()
     output = io.StringIO()
+    if isinstance(python_preamble, str) and python_preamble.strip():
+        try:
+            with redirect_stdout(io.StringIO()):
+                exec(python_preamble, exec_context, exec_context)
+        except Exception as exc:
+            raise YAMLParseError(
+                f'Python preamble error in "{template_name}": {exc}'
+            ) from exc
     try:
         with redirect_stdout(output):
-            exec(code, globals_dict, locals_dict)
+            exec(code, exec_context, exec_context)
     except Exception as exc:
         raise YAMLParseError(f'Python item error in "{template_name}": {exc}') from exc
 
-    if "result" in locals_dict:
-        result = locals_dict.get("result")
+    if "result" in exec_context:
+        result = exec_context.get("result")
         if result is None:
             return []
         if not isinstance(result, list):
@@ -495,6 +517,16 @@ def _run_python_items(code: str, context: Dict[str, str], template_name: str) ->
     if items is None:
         raise YAMLParseError(f'Python block output must be a list in "{template_name}".')
     return items
+
+
+def _with_file_context(context: Dict[str, str], filename: str) -> TokenContext:
+    file_path = Path(filename)
+    overrides = {
+        "filename": filename,
+        "file_stem": file_path.stem,
+        "file_ext": file_path.suffix,
+    }
+    return _with_context_overrides(context, overrides)
 
 
 def _process_file_item(
@@ -564,12 +596,13 @@ def _process_file_item(
         filename_value = _normalize_token_value(item['file_template'])
         filename = substitute_tokens(filename_value, context)
         filename = sanitize_filename(filename)
+        file_context = _with_file_context(context, filename)
         template_name = substitute_tokens(filename_value, context).strip()
         if not template_name:
             return []
         template_content = get_file_template_content(template_name)
         try:
-            content = substitute_tokens(template_content, context)
+            content = substitute_tokens(template_content, file_context)
         except Exception as exc:
             raise _decorate_template_error(
                 exc,
@@ -588,16 +621,17 @@ def _process_file_item(
         # It's a file
         filename = substitute_tokens(_normalize_token_value(item['file']), context)
         filename = sanitize_filename(filename)
+        file_context = _with_file_context(context, filename)
         
         # Get content
         content = ""
         if 'content' in item:
-            content = substitute_tokens(str(item['content']), context)
+            content = substitute_tokens(str(item['content']), file_context)
         elif 'template' in item:
             template_name = item['template']
             template_content = get_file_template_content(template_name)
             try:
-                content = substitute_tokens(template_content, context)
+                content = substitute_tokens(template_content, file_context)
             except Exception as exc:
                 raise _decorate_template_error(
                     exc,

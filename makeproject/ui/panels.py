@@ -793,6 +793,7 @@ class PreviewPanel(QFrame):
             self.status_label.setText("No files")
             self.tree.clear()
             self._file_contents = {}
+            self._clear_content_view()
             self.tree.setUpdatesEnabled(True)
             self.tree.blockSignals(False)
             return
@@ -845,6 +846,10 @@ class PreviewPanel(QFrame):
             if item:
                 self.tree.setCurrentItem(item)
                 self._update_content_for_item(item)
+            else:
+                self._clear_content_view()
+        else:
+            self._clear_content_view()
 
         self.tree.setUpdatesEnabled(True)
         self.tree.blockSignals(False)
@@ -937,6 +942,10 @@ class PreviewPanel(QFrame):
 
     def _get_previous_visible_item(self, item):
         return self.tree.itemAbove(item)
+
+    def _clear_content_view(self):
+        self.content_view.clear()
+        self.content_view.setPlaceholderText("Select a file to preview its contents.")
 
     def _update_content_for_item(self, item):
         """ Updates the Preview panel with the content for the active item. """

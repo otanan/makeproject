@@ -17,13 +17,18 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QCheckBox,
     QSizePolicy,
+    QStackedWidget,
+    QWidget,
 )
 
 from .dialog_utils import style_default_dialog_button
+from .editors import CodeEditor
+from .panels import SegmentedControl
+from ..highlighter import PythonHighlighter
 
 
 class TemplatePathsDialog(QDialog):
-    """Dialog for configuring template storage locations."""
+    """Dialog for configuring MakeProject settings."""
 
     def __init__(
         self,
@@ -33,12 +38,16 @@ class TemplatePathsDialog(QDialog):
         default_project_path: Path,
         default_file_path: Path,
         default_custom_tokens_path: Path,
+        python_interpreter_path: Path,
+        default_python_interpreter_path: Path,
+        python_preamble: str,
+        dark_mode: bool = True,
         parent=None,
     ):
         super().__init__(parent)
         self.setWindowTitle("MakeProject Settings")
         self.setModal(True)
-        self.setMinimumSize(720, 260)
+        self.setMinimumSize(760, 420)
 
         self._project_input = QLineEdit()
         self._project_input.setText(str(project_path))
@@ -95,12 +104,96 @@ class TemplatePathsDialog(QDialog):
         form.addRow("Custom tokens file:", tokens_row)
 
         hint = QLabel("Leave a path blank to use the default location.")
+        hint.setWordWrap(True)
         hint.setProperty("class", "muted")
 
         self._move_checkbox = QCheckBox(
             "Move existing templates/tokens to the new location"
         )
         self._move_checkbox.setChecked(True)
+
+        template_page = QWidget()
+        template_layout = QVBoxLayout(template_page)
+        template_layout.setContentsMargins(0, 0, 0, 0)
+        template_layout.setSpacing(8)
+        template_layout.addLayout(form)
+        template_layout.addWidget(hint)
+        template_layout.addWidget(self._move_checkbox)
+        template_layout.addStretch(1)
+
+        self._python_interpreter_input = QLineEdit()
+        self._python_interpreter_input.setText(str(python_interpreter_path))
+        self._python_interpreter_input.setPlaceholderText(
+            str(default_python_interpreter_path)
+        )
+        self._python_interpreter_input.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            self._python_interpreter_input.sizePolicy().verticalPolicy(),
+        )
+
+        python_browse = QPushButton("Browse...")
+        python_browse.clicked.connect(
+            lambda: self._browse_python_interpreter(self._python_interpreter_input)
+        )
+
+        python_row = QHBoxLayout()
+        python_row.addWidget(self._python_interpreter_input, 1)
+        python_row.addWidget(python_browse)
+
+        python_form = QFormLayout()
+        python_form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+        python_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow
+        )
+        python_form.addRow("Python interpreter:", python_row)
+
+        python_hint = QLabel("Leave blank to use the app's Python interpreter.")
+        python_hint.setWordWrap(True)
+        python_hint.setProperty("class", "muted")
+
+        preamble_label = QLabel("Python Preamble:")
+        self._python_preamble_editor = CodeEditor(
+            indent_size=4,
+            placeholder=("""# Runs before every Python token
+# Example:
+y = 3
+def f(x):
+    return x + y
+    
+# Then writing "{{mp.py:f(2)}}" in a template will replace the token with "5".
+"""
+
+            ),
+            highlighter_cls=PythonHighlighter,
+            dark_mode=dark_mode,
+        )
+        self._python_preamble_editor.setPlainText(python_preamble or "")
+        self._python_preamble_editor.setMinimumHeight(180)
+
+        preamble_hint = QLabel(
+            "Runs before every Python expression or block during generation."
+        )
+        preamble_hint.setWordWrap(True)
+        preamble_hint.setProperty("class", "muted")
+
+        python_page = QWidget()
+        python_layout = QVBoxLayout(python_page)
+        python_layout.setContentsMargins(0, 0, 0, 0)
+        python_layout.setSpacing(8)
+        python_layout.addLayout(python_form)
+        python_layout.addWidget(python_hint)
+        python_layout.addWidget(preamble_label)
+        python_layout.addWidget(self._python_preamble_editor, 1)
+        python_layout.addWidget(preamble_hint)
+
+        tabs = SegmentedControl(["Template Locations", "Python Settings"])
+        self._tabs = tabs
+
+        stacked = QStackedWidget()
+        stacked.addWidget(template_page)
+        stacked.addWidget(python_page)
+        self._stacked = stacked
+        tabs.index_changed.connect(stacked.setCurrentIndex)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -113,9 +206,8 @@ class TemplatePathsDialog(QDialog):
             style_default_dialog_button(ok_button)
 
         layout = QVBoxLayout(self)
-        layout.addLayout(form)
-        layout.addWidget(hint)
-        layout.addWidget(self._move_checkbox)
+        layout.addWidget(tabs)
+        layout.addWidget(stacked, 1)
         layout.addWidget(buttons)
 
     def _browse_folder(self, target: QLineEdit):
@@ -141,6 +233,19 @@ class TemplatePathsDialog(QDialog):
         if selected:
             target.setText(selected)
 
+    def _browse_python_interpreter(self, target: QLineEdit):
+        start_path = target.text().strip()
+        if not start_path:
+            start_path = str(Path.home())
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose Python Interpreter",
+            start_path,
+            "All Files (*)",
+        )
+        if selected:
+            target.setText(selected)
+
     def project_path_text(self) -> str:
         return self._project_input.text().strip()
 
@@ -149,6 +254,12 @@ class TemplatePathsDialog(QDialog):
 
     def custom_tokens_path_text(self) -> str:
         return self._custom_tokens_input.text().strip()
+
+    def python_interpreter_text(self) -> str:
+        return self._python_interpreter_input.text().strip()
+
+    def python_preamble_text(self) -> str:
+        return self._python_preamble_editor.toPlainText()
 
     def should_move_existing(self) -> bool:
         return self._move_checkbox.isChecked()
