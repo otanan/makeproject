@@ -22,6 +22,8 @@ CUSTOM_TOKENS_PREF_KEY = "custom_tokens_path"
 PYTHON_INTERPRETER_PREF_KEY = "python_interpreter_path"
 PYTHON_PREAMBLE_PREF_KEY = "python_preamble"
 DEFAULT_PYTHON_INTERPRETER = Path(sys.executable)
+IGNORED_TEMPLATE_DIRS = {".git", ".hg", ".svn"}
+IGNORED_TEMPLATE_FILES = {".DS_Store", ".localized", "Thumbs.db", "desktop.ini"}
 
 # Default file templates seeded on first run (use actual file extensions)
 DEFAULT_FILE_TEMPLATES = {
@@ -302,7 +304,9 @@ def _iter_template_files() -> List[Path]:
     for item in base_dir.rglob("*"):
         if item.is_file():
             rel = item.relative_to(base_dir)
-            if any(part.startswith(".") for part in rel.parts):
+            if any(part in IGNORED_TEMPLATE_DIRS for part in rel.parts[:-1]):
+                continue
+            if rel.name in IGNORED_TEMPLATE_FILES or rel.name.startswith("._"):
                 continue
             files.append(item)
     return files
