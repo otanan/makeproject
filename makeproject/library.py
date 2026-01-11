@@ -19,9 +19,11 @@ PREFERENCES_PATH = APP_SUPPORT_DIR / "preferences.yaml"
 UPDATES_DIR = APP_SUPPORT_DIR / "updates"
 APP_OPENED_PREF_KEY = "app_opened"
 CUSTOM_TOKENS_PREF_KEY = "custom_tokens_path"
+PROJECT_GENERATION_DIR_PREF_KEY = "project_generation_dir"
 PYTHON_INTERPRETER_PREF_KEY = "python_interpreter_path"
 PYTHON_PREAMBLE_PREF_KEY = "python_preamble"
 DEFAULT_PYTHON_INTERPRETER = Path(sys.executable)
+DEFAULT_PROJECT_GENERATION_DIR = Path.home()
 IGNORED_TEMPLATE_DIRS = {".git", ".hg", ".svn"}
 IGNORED_TEMPLATE_FILES = {".DS_Store", ".localized", "Thumbs.db", "desktop.ini"}
 
@@ -159,6 +161,31 @@ def set_template_paths(project_templates_dir: Path, file_templates_dir: Path):
     prefs = load_preferences()
     prefs["project_templates_dir"] = str(project_templates_dir)
     prefs["file_templates_dir"] = str(file_templates_dir)
+    save_preferences(prefs)
+
+
+def get_project_generation_dir() -> Path:
+    """Return the default start directory for project generation."""
+    prefs = load_preferences()
+    path_value = prefs.get(PROJECT_GENERATION_DIR_PREF_KEY)
+    if isinstance(path_value, str) and path_value.strip():
+        path = Path(path_value).expanduser()
+        if path.exists() and path.is_dir():
+            return path
+    return DEFAULT_PROJECT_GENERATION_DIR
+
+
+def set_project_generation_dir(project_generation_dir: Optional[Path]):
+    """Persist the default start directory for project generation."""
+    prefs = load_preferences()
+    if project_generation_dir is None:
+        prefs.pop(PROJECT_GENERATION_DIR_PREF_KEY, None)
+    else:
+        path_value = str(project_generation_dir).strip()
+        if path_value:
+            prefs[PROJECT_GENERATION_DIR_PREF_KEY] = path_value
+        else:
+            prefs.pop(PROJECT_GENERATION_DIR_PREF_KEY, None)
     save_preferences(prefs)
 
 

@@ -698,6 +698,7 @@ class MakeProjectWindow(QMainWindow):
         project_path = library.get_project_templates_dir()
         file_path = library.get_file_templates_dir()
         custom_tokens_path = library.get_custom_tokens_path()
+        project_generation_path = library.get_project_generation_dir()
         python_interpreter_path = library.get_python_interpreter_path()
         python_preamble = library.get_python_preamble()
         old_python_interpreter_path = python_interpreter_path
@@ -706,9 +707,11 @@ class MakeProjectWindow(QMainWindow):
             project_path,
             file_path,
             custom_tokens_path,
+            project_generation_path,
             library.DEFAULT_PROJECT_TEMPLATES_DIR,
             library.DEFAULT_FILE_TEMPLATES_DIR,
             library.CUSTOM_TOKENS_PATH,
+            library.DEFAULT_PROJECT_GENERATION_DIR,
             python_interpreter_path,
             library.DEFAULT_PYTHON_INTERPRETER,
             python_preamble,
@@ -730,6 +733,10 @@ class MakeProjectWindow(QMainWindow):
             dialog.custom_tokens_path_text(),
             library.CUSTOM_TOKENS_PATH,
         )
+        new_project_generation_path = self._normalize_template_path(
+            dialog.project_generation_path_text(),
+            library.DEFAULT_PROJECT_GENERATION_DIR,
+        )
         new_python_interpreter_path = self._normalize_python_interpreter_path(
             dialog.python_interpreter_text(),
             library.DEFAULT_PYTHON_INTERPRETER,
@@ -742,6 +749,10 @@ class MakeProjectWindow(QMainWindow):
             return
         if not self._validate_custom_tokens_path(
             new_custom_tokens_path, "Custom tokens"
+        ):
+            return
+        if not self._validate_generation_path(
+            new_project_generation_path, "Project generation"
         ):
             return
         if not self._validate_python_interpreter_path(
@@ -778,6 +789,7 @@ class MakeProjectWindow(QMainWindow):
         else:
             library.set_python_interpreter_path(None)
         library.set_python_preamble(new_python_preamble)
+        library.set_project_generation_dir(new_project_generation_path)
 
         template_paths_changed = not (
             old_project_path.resolve() == new_project_path.resolve()
@@ -865,6 +877,23 @@ class MakeProjectWindow(QMainWindow):
                 self,
                 "Invalid File",
                 f"{label} path must be a file.\n\n{path}",
+            )
+            return False
+        return True
+
+    def _validate_generation_path(self, path: Path, label: str) -> bool:
+        if not path.exists():
+            QMessageBox.warning(
+                self,
+                "Folder Unavailable",
+                f"{label} folder does not exist.\n\n{path}",
+            )
+            return False
+        if not path.is_dir():
+            QMessageBox.warning(
+                self,
+                "Invalid Folder",
+                f"{label} path is not a folder.\n\n{path}",
             )
             return False
         return True
@@ -1329,7 +1358,7 @@ class MakeProjectWindow(QMainWindow):
         output_dir = QFileDialog.getExistingDirectory(
             self,
             "Select Output Directory",
-            str(Path.home())
+            str(library.get_project_generation_dir())
         )
         if not output_dir:
             return

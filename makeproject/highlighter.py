@@ -141,8 +141,10 @@ class YAMLHighlighter(QSyntaxHighlighter):
         
         # MakeProject tokens {mp:...} and {mp.py:...}
         self.rules.append((re.compile(r'\{mp(?:\.py)?\s*:[^}]+\}', re.IGNORECASE), 'token'))
+        self.rules.append((re.compile(r'\{\/mp\.py\s*\}', re.IGNORECASE), 'token'))
 
-        self.python_block_start_re = re.compile(r'\{mp\.py\|', re.IGNORECASE)
+        self.python_block_start_re = re.compile(r'\{mp\.py\s*\}', re.IGNORECASE)
+        self.python_block_end_re = re.compile(r'\{\/mp\.py\s*\}', re.IGNORECASE)
         self.python_expr_start_re = re.compile(r'\{mp\.py\s*:\s*', re.IGNORECASE)
         keywords = [
             "and", "as", "assert", "async", "await", "break", "class", "continue",
@@ -157,6 +159,8 @@ class YAMLHighlighter(QSyntaxHighlighter):
             "sorted", "enumerate", "any", "all",
         ]
         self.python_rules = [
+            (re.compile(r'"""[^"\\]*(\\.[^"\\]*)*"""'), "string"),
+            (re.compile(r"'''[^'\\]*(\\.[^'\\]*)*'''"), "string"),
             (re.compile(r"\"[^\"\\]*(\\.[^\"\\]*)*\""), "string"),
             (re.compile(r"'[^'\\]*(\\.[^'\\]*)*'"), "string"),
             (re.compile(r"\b\d+(\.\d+)?\b"), "number"),
@@ -195,15 +199,15 @@ class YAMLHighlighter(QSyntaxHighlighter):
         token_ranges = []
         idx = 0
         if self.previousBlockState() == self.PYTHON_BLOCK_STATE:
-            end_idx = text.find("}")
-            if end_idx == -1:
+            end_match = self.python_block_end_re.search(text)
+            if not end_match:
                 ranges.append((0, len(text)))
                 self.setCurrentBlockState(self.PYTHON_BLOCK_STATE)
                 return ranges, token_ranges
-            if end_idx > 0:
-                ranges.append((0, end_idx))
-            token_ranges.append((end_idx, 1))
-            idx = end_idx + 1
+            if end_match.start() > 0:
+                ranges.append((0, end_match.start()))
+            token_ranges.append((end_match.start(), end_match.end() - end_match.start()))
+            idx = end_match.end()
         while True:
             block_match = self.python_block_start_re.search(text, idx)
             expr_match = self.python_expr_start_re.search(text, idx)
@@ -224,14 +228,23 @@ class YAMLHighlighter(QSyntaxHighlighter):
                 is_block = False
             token_ranges.append((match.start(), match.end() - match.start()))
             code_start = match.end()
+            if is_block:
+                end_match = self.python_block_end_re.search(text, code_start)
+                if not end_match:
+                    if code_start < len(text):
+                        ranges.append((code_start, len(text) - code_start))
+                    self.setCurrentBlockState(self.PYTHON_BLOCK_STATE)
+                    return ranges, token_ranges
+                if end_match.start() > code_start:
+                    ranges.append((code_start, end_match.start() - code_start))
+                token_ranges.append((end_match.start(), end_match.end() - end_match.start()))
+                idx = end_match.end()
+                continue
             end_idx = text.find("}", code_start)
             if end_idx == -1:
                 if code_start < len(text):
                     ranges.append((code_start, len(text) - code_start))
-                if is_block:
-                    self.setCurrentBlockState(self.PYTHON_BLOCK_STATE)
-                else:
-                    self.setCurrentBlockState(0)
+                self.setCurrentBlockState(0)
                 return ranges, token_ranges
             if end_idx > code_start:
                 ranges.append((code_start, end_idx - code_start))
@@ -379,6 +392,9 @@ class YAMLHighlighter(QSyntaxHighlighter):
 class PythonHighlighter(QSyntaxHighlighter):
     """Syntax highlighter for Python code blocks."""
 
+    TRIPLE_DOUBLE_STATE = 1
+    TRIPLE_SINGLE_STATE = 2
+
     def __init__(self, parent=None, dark_mode=True):
         super().__init__(parent)
         self.dark_mode = dark_mode
@@ -435,6 +451,8 @@ class PythonHighlighter(QSyntaxHighlighter):
         ]
 
         self.rules = [
+            (re.compile(r'"""[^"\\]*(\\.[^"\\]*)*"""'), "string"),
+            (re.compile(r"'''[^'\\]*(\\.[^'\\]*)*'''"), "string"),
             (re.compile(r"\"[^\"\\]*(\\.[^\"\\]*)*\""), "string"),
             (re.compile(r"'[^'\\]*(\\.[^'\\]*)*'"), "string"),
             (re.compile(r"\b\d+(\.\d+)?\b"), "number"),
@@ -448,7 +466,44 @@ class PythonHighlighter(QSyntaxHighlighter):
         self._setup_formats()
         self.rehighlight()
 
+    def _collect_triple_quote_ranges(self, text):
+        ranges = []
+        idx = 0
+        state = self.previousBlockState()
+        if state in (self.TRIPLE_DOUBLE_STATE, self.TRIPLE_SINGLE_STATE):
+            quote = '"""' if state == self.TRIPLE_DOUBLE_STATE else "'''"
+            end_idx = text.find(quote)
+            if end_idx == -1:
+                ranges.append((0, len(text)))
+                self.setCurrentBlockState(state)
+                return ranges
+            ranges.append((0, end_idx + 3))
+            idx = end_idx + 3
+        while True:
+            next_double = text.find('"""', idx)
+            next_single = text.find("'''", idx)
+            if next_double == -1 and next_single == -1:
+                break
+            if next_double != -1 and (next_single == -1 or next_double < next_single):
+                quote = '"""'
+                state = self.TRIPLE_DOUBLE_STATE
+                start_idx = next_double
+            else:
+                quote = "'''"
+                state = self.TRIPLE_SINGLE_STATE
+                start_idx = next_single
+            end_idx = text.find(quote, start_idx + 3)
+            if end_idx == -1:
+                ranges.append((start_idx, len(text) - start_idx))
+                self.setCurrentBlockState(state)
+                return ranges
+            ranges.append((start_idx, end_idx + 3 - start_idx))
+            idx = end_idx + 3
+        self.setCurrentBlockState(0)
+        return ranges
+
     def highlightBlock(self, text):
+        triple_ranges = self._collect_triple_quote_ranges(text)
         for pattern, format_name in self.rules:
             for match in pattern.finditer(text):
                 self.setFormat(
@@ -456,3 +511,6 @@ class PythonHighlighter(QSyntaxHighlighter):
                     match.end() - match.start(),
                     self.formats[format_name],
                 )
+        for start, length in triple_ranges:
+            if length > 0:
+                self.setFormat(start, length, self.formats["string"])

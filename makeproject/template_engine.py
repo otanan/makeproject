@@ -264,7 +264,7 @@ def substitute_tokens(text: str, context: Dict[str, str]) -> str:
     - {mp:TokenName} uses the token context (case-insensitive)
       (if the token is marked as python, it will be evaluated)
     - {mp.py: <expr>} evaluates a Python expression
-    - {mp.py|<code>} executes Python code (multi-line supported)
+    - {mp.py}<code>{/mp.py} executes Python code (multi-line supported)
     """
     python_preamble = library.get_python_preamble()
     has_preamble = isinstance(python_preamble, str) and python_preamble.strip()
@@ -362,7 +362,12 @@ def substitute_tokens(text: str, context: Dict[str, str]) -> str:
         return replace_custom_token(token_name, match.group(0))
 
     # Process python block tokens first.
-    text = re.sub(r'\{mp\.py\|([\s\S]*?)\}', replace_python_block, text, flags=re.IGNORECASE)
+    text = re.sub(
+        r'\{mp\.py\s*\}([\s\S]*?)\{\/mp\.py\s*\}',
+        replace_python_block,
+        text,
+        flags=re.IGNORECASE,
+    )
     # Process python expression tokens.
     text = re.sub(r'\{mp\.py\s*:\s*([^}]+)\}', replace_python_expr, text, flags=re.IGNORECASE)
     # Pattern matches {mp:TokenName} - case insensitive on mp

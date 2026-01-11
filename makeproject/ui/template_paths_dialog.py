@@ -35,9 +35,11 @@ class TemplatePathsDialog(QDialog):
         project_path: Path,
         file_path: Path,
         custom_tokens_path: Path,
+        project_generation_path: Path,
         default_project_path: Path,
         default_file_path: Path,
         default_custom_tokens_path: Path,
+        default_project_generation_path: Path,
         python_interpreter_path: Path,
         default_python_interpreter_path: Path,
         python_preamble: str,
@@ -73,6 +75,14 @@ class TemplatePathsDialog(QDialog):
             self._custom_tokens_input.sizePolicy().verticalPolicy(),
         )
 
+        self._generation_input = QLineEdit()
+        self._generation_input.setText(str(project_generation_path))
+        self._generation_input.setPlaceholderText(str(default_project_generation_path))
+        self._generation_input.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            self._generation_input.sizePolicy().verticalPolicy(),
+        )
+
         project_browse = QPushButton("Browse...")
         project_browse.clicked.connect(lambda: self._browse_folder(self._project_input))
 
@@ -82,6 +92,11 @@ class TemplatePathsDialog(QDialog):
         tokens_browse = QPushButton("Browse...")
         tokens_browse.clicked.connect(
             lambda: self._browse_file(self._custom_tokens_input)
+        )
+
+        generation_browse = QPushButton("Browse...")
+        generation_browse.clicked.connect(
+            lambda: self._browse_folder(self._generation_input)
         )
 
         project_row = QHBoxLayout()
@@ -96,12 +111,17 @@ class TemplatePathsDialog(QDialog):
         tokens_row.addWidget(self._custom_tokens_input, 1)
         tokens_row.addWidget(tokens_browse)
 
+        generation_row = QHBoxLayout()
+        generation_row.addWidget(self._generation_input, 1)
+        generation_row.addWidget(generation_browse)
+
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         form.addRow("Project templates:", project_row)
         form.addRow("File templates:", file_row)
         form.addRow("Custom tokens file:", tokens_row)
+        form.addRow("Project generation folder:", generation_row)
 
         hint = QLabel("Leave a path blank to use the default location.")
         hint.setWordWrap(True)
@@ -254,6 +274,9 @@ def f(x):
 
     def custom_tokens_path_text(self) -> str:
         return self._custom_tokens_input.text().strip()
+
+    def project_generation_path_text(self) -> str:
+        return self._generation_input.text().strip()
 
     def python_interpreter_text(self) -> str:
         return self._python_interpreter_input.text().strip()

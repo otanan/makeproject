@@ -160,7 +160,7 @@ Single-line Python values are treated as expressions, multi-line values are trea
 
 Python tokens:
 
-Use `{mp.py: expression}` for a single expression, or `{mp.py| ... }` for a code block. The expression result is inserted as text. The block should return or print a value.
+Use `{mp.py: expression}` for a single expression, or `{mp.py} ... {/mp.py}` for a code block. The expression result is inserted as text. The block should return or print a value.
 
 ## Python Settings
 
