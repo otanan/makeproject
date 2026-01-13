@@ -766,12 +766,20 @@ class PreviewPanel(QFrame):
         else:
             self.header_label.setText("PREVIEW")
 
-    def update_tree(self, root_node, error_message: str = None):
+    def _set_status(self, message: str, status_class: str):
+        self.status_label.setText(message)
+        self.status_label.setProperty("class", status_class)
+        self.status_label.style().polish(self.status_label)
+
+    def update_tree(
+        self,
+        root_node,
+        status_message: str = None,
+        status_kind: str = "error",
+    ):
         """Update the preview tree with file nodes."""
-        if error_message:
-            self.status_label.setText(error_message)
-            self.status_label.setProperty("class", "error")
-            self.status_label.style().polish(self.status_label)
+        if status_message and status_kind == "error":
+            self._set_status(status_message, "error")
             return
 
         if self.tree.topLevelItemCount():
@@ -790,7 +798,10 @@ class PreviewPanel(QFrame):
         self.tree.setCurrentItem(None)
 
         if not root_node:
-            self.status_label.setText("No files")
+            if status_message:
+                self._set_status(status_message, status_kind)
+            else:
+                self._set_status("No files", "muted")
             self.tree.clear()
             self._file_contents = {}
             self._clear_content_view()
@@ -799,9 +810,13 @@ class PreviewPanel(QFrame):
             return
 
         file_count = root_node.file_count()
-        self.status_label.setText(f"{file_count} file{'s' if file_count != 1 else ''}")
-        self.status_label.setProperty("class", "muted")
-        self.status_label.style().polish(self.status_label)
+        if status_message:
+            self._set_status(status_message, status_kind)
+        else:
+            self._set_status(
+                f"{file_count} file{'s' if file_count != 1 else ''}",
+                "muted",
+            )
 
         self.tree.clear()
         self._file_contents = {}

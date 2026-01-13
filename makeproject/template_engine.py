@@ -64,6 +64,13 @@ class YAMLParseError(Exception):
             super().__init__(message)
 
 
+@dataclass(frozen=True)
+class TemplateReference:
+    key: str
+    raw_value: str
+    line: int | None = None
+
+
 def _normalize_implicit_token_keys(text: str) -> str:
     """Quote implicit folder keys that are token placeholders (e.g., - {mp:title}:)."""
     lines = []
@@ -132,6 +139,34 @@ def parse_yaml(text: str) -> Tuple[Optional[Dict], Optional[str]]:
         if line:
             return None, f"Invalid YAML on line {line}"
     return None, f"Invalid YAML: {str(e)}"
+
+
+def collect_template_references(text: str) -> List[TemplateReference]:
+    if not re.search(
+        r'(?m)^\s*-?\s*(project_template|file_template|template)\s*:',
+        text,
+    ):
+        return []
+    refs: List[TemplateReference] = []
+    pattern = re.compile(
+        r'^\s*-?\s*(project_template|file_template|template)\s*:\s*(.*?)\s*(?:#.*)?$'
+    )
+    for index, line in enumerate(text.splitlines(), start=1):
+        match = pattern.match(line)
+        if not match:
+            continue
+        key = match.group(1)
+        raw_value = match.group(2).strip()
+        if not raw_value or raw_value in ("|", ">"):
+            continue
+        if (
+            len(raw_value) >= 2
+            and raw_value[0] == raw_value[-1]
+            and raw_value[0] in ('"', "'")
+        ):
+            raw_value = raw_value[1:-1]
+        refs.append(TemplateReference(key=key, raw_value=raw_value, line=index))
+    return refs
 
 
 def _extract_error_line(message: str) -> int | None:
@@ -415,6 +450,7 @@ def _collect_nodes(
     context: Dict[str, str],
     include_stack: List[str],
     source_template: str | None = None,
+    allow_missing_templates: bool = False,
 ) -> List[FileNode]:
     """Process a list of YAML items into file nodes."""
     nodes: List[FileNode] = []
@@ -437,9 +473,16 @@ def _collect_nodes(
                 context,
                 include_stack,
                 source_template=source_template,
+                allow_missing_templates=allow_missing_templates,
             ))
             continue
-        nodes.extend(_process_file_item(item, context, include_stack, source_template))
+        nodes.extend(_process_file_item(
+            item,
+            context,
+            include_stack,
+            source_template,
+            allow_missing_templates,
+        ))
     return nodes
 
 
@@ -447,6 +490,7 @@ def build_file_tree(
     yaml_data: Optional[Any],
     context: Dict[str, str],
     include_stack: Optional[List[str]] = None,
+    allow_missing_templates: bool = False,
 ) -> Optional[FileNode]:
     """
     Build a file tree from parsed YAML data.
@@ -467,7 +511,12 @@ def build_file_tree(
     root = FileNode(name=project_name, is_folder=True)
     
     # Process files list
-    root.children.extend(_collect_nodes(files, context, include_stack))
+    root.children.extend(_collect_nodes(
+        files,
+        context,
+        include_stack,
+        allow_missing_templates=allow_missing_templates,
+    ))
     
     return root
 
@@ -539,6 +588,7 @@ def _process_file_item(
     context: Dict[str, str],
     include_stack: List[str],
     source_template: str | None = None,
+    allow_missing_templates: bool = False,
 ) -> List[FileNode]:
     """Process a single file/folder item from the YAML."""
     if not isinstance(item, dict):
@@ -556,6 +606,8 @@ def _process_file_item(
             raise YAMLParseError(f"Recursive project template include: {chain}")
         content = library.load_project_template(template_name)
         if content is None:
+            if allow_missing_templates:
+                return []
             raise YAMLParseError(f'Project template "{template_name}" not found.')
         data, error = parse_yaml(content)
         if error:
@@ -588,6 +640,7 @@ def _process_file_item(
                 include_context,
                 include_stack + [template_name],
                 source_template=template_name,
+                allow_missing_templates=allow_missing_templates,
             )
         except Exception as exc:
             raise _decorate_template_error(
@@ -671,6 +724,7 @@ def _process_file_item(
                 context,
                 include_stack,
                 source_template=source_template,
+                allow_missing_templates=allow_missing_templates,
             ))
 
         return [folder]
@@ -698,6 +752,7 @@ def _process_file_item(
                 context,
                 include_stack,
                 source_template=source_template,
+                allow_missing_templates=allow_missing_templates,
             ))
             return [folder]
         raise YAMLParseError(f'Invalid shorthand folder for "{key}".')

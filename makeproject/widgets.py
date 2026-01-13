@@ -135,7 +135,9 @@ class IndentTextEdit(QPlainTextEdit):
         self._gutter_fg = QColor("#6C7086")
         self._current_line_fg = QColor("#CDD6F4")
         self._error_badge_bg = QColor("#FF5C5C")
+        self._warning_badge_bg = QColor("#F59E0B")
         self._error_line = None
+        self._warning_line = None
         
         # Disable line wrapping for accurate line numbers
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
@@ -226,11 +228,25 @@ class IndentTextEdit(QPlainTextEdit):
                 number = str(block_number + 1)
                 is_error_line = self._error_line == block_number + 1
 
+                is_warning_line = self._warning_line == block_number + 1
+
                 if is_error_line:
                     badge_radius = 5
                     badge_x = 8
                     badge_y = top + (self.fontMetrics().height() // 2)
                     painter.setBrush(self._error_badge_bg)
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.drawEllipse(
+                        badge_x - badge_radius,
+                        badge_y - badge_radius,
+                        badge_radius * 2,
+                        badge_radius * 2,
+                    )
+                elif is_warning_line:
+                    badge_radius = 5
+                    badge_x = 8
+                    badge_y = top + (self.fontMetrics().height() // 2)
+                    painter.setBrush(self._warning_badge_bg)
                     painter.setPen(Qt.PenStyle.NoPen)
                     painter.drawEllipse(
                         badge_x - badge_radius,
@@ -284,6 +300,14 @@ class IndentTextEdit(QPlainTextEdit):
             return
         self._error_line = line
         self.line_number_area.update()
+
+    def set_warning_line(self, line: int | None):
+        if line is not None and line < 1:
+            line = None
+        if self._warning_line == line:
+            return
+        self._warning_line = line
+        self.line_number_area.update()
     
     def keyPressEvent(self, event: QKeyEvent):
         """Handle special key presses: Tab, Enter, Cmd+Delete, Cmd+/, Cmd+[, Cmd+]."""
@@ -292,6 +316,15 @@ class IndentTextEdit(QPlainTextEdit):
         
         # Cmd+Backspace - delete to start of line (content to the left of cursor)
         if is_cmd and event.key() == Qt.Key.Key_Backspace:
+            cursor = self.textCursor()
+            if cursor.hasSelection():
+                super().keyPressEvent(event)
+                return
+            if cursor.positionInBlock() == 0:
+                if cursor.position() > 0:
+                    cursor.deletePreviousChar()
+                    self.setTextCursor(cursor)
+                return
             self._delete_to_line_start()
             return
         

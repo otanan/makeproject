@@ -26,7 +26,8 @@ from ..styles import load_qss
 from ..highlighter import YAMLHighlighter
 from ..template_engine import (
     parse_yaml, build_token_context, build_file_tree,
-    generate_project, DEFAULT_YAML, YAMLParseError
+    generate_project, DEFAULT_YAML, YAMLParseError,
+    substitute_tokens, collect_template_references
 )
 from .. import library
 from ..updater import (
@@ -1317,6 +1318,52 @@ class MakeProjectWindow(QMainWindow):
         message = self._ensure_line_in_message(message, line)
         return message, line
 
+    def _collect_missing_template_warnings(
+        self,
+        yaml_text: str,
+        context,
+    ) -> list[tuple[str, int | None]]:
+        references = collect_template_references(yaml_text)
+        if not references:
+            return []
+        project_templates = set(library.list_project_templates())
+        file_templates = set(library.list_file_template_names())
+        warnings: list[tuple[str, int | None]] = []
+        for ref in references:
+            raw_value = (ref.raw_value or "").strip()
+            if not raw_value:
+                continue
+            if ref.key == "project_template":
+                try:
+                    template_name = substitute_tokens(raw_value, context).strip()
+                except YAMLParseError:
+                    continue
+                if not template_name:
+                    continue
+                if template_name not in project_templates:
+                    message = self._ensure_line_in_message(
+                        f'Missing project template "{template_name}"',
+                        ref.line,
+                    )
+                    warnings.append((message, ref.line))
+            elif ref.key in ("file_template", "template"):
+                if ref.key == "file_template":
+                    try:
+                        template_name = substitute_tokens(raw_value, context).strip()
+                    except YAMLParseError:
+                        continue
+                else:
+                    template_name = raw_value.strip()
+                if not template_name:
+                    continue
+                if template_name not in file_templates:
+                    message = self._ensure_line_in_message(
+                        f'Missing file template "{template_name}"',
+                        ref.line,
+                    )
+                    warnings.append((message, ref.line))
+        return warnings
+
     def _update_preview(self):
         """Refresh the preview panel based on YAML and details."""
         yaml_text = self.yaml_editor.toPlainText()
@@ -1326,21 +1373,32 @@ class MakeProjectWindow(QMainWindow):
         data, error = parse_yaml(yaml_text)
         if error:
             self.yaml_editor.set_error_line(self._extract_error_line(error))
+            self.yaml_editor.set_warning_line(None)
             self.preview_panel.update_tree(self._last_valid_tree, error)
             return
 
         context = build_token_context(data, title, desc)
+        warnings = self._collect_missing_template_warnings(yaml_text, context)
+        warning_message, warning_line = (warnings[0] if warnings else (None, None))
         try:
-            tree = build_file_tree(data, context)
+            tree = build_file_tree(data, context, allow_missing_templates=True)
         except Exception as exc:
             message, line = self._describe_yaml_error(exc, yaml_text)
             self.yaml_editor.set_error_line(line)
+            self.yaml_editor.set_warning_line(None)
             self.preview_panel.update_tree(self._last_valid_tree, message)
             return
         self.yaml_editor.set_error_line(None)
+        if warning_message:
+            self.yaml_editor.set_warning_line(warning_line)
+        else:
+            self.yaml_editor.set_warning_line(None)
         if tree:
             self._last_valid_tree = tree
-        self.preview_panel.update_tree(tree)
+        if warning_message:
+            self.preview_panel.update_tree(tree, warning_message, status_kind="warning")
+        else:
+            self.preview_panel.update_tree(tree)
 
     def _generate_project(self):
         """Generate the project on disk using the current YAML."""
