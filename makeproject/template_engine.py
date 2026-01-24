@@ -71,6 +71,130 @@ class TemplateReference:
     line: int | None = None
 
 
+@dataclass(frozen=True)
+class TemplateField:
+    token: str
+    label: str
+    placeholder: str = ""
+    field_type: str = "text"
+    default: str = ""
+
+
+@dataclass(frozen=True)
+class TemplateMetadata:
+    name: str | None = None
+    description: str | None = None
+    fields: List[TemplateField] = field(default_factory=list)
+
+
+_METADATA_MARKER = re.compile(r'^\s*#\s*---\s*$')
+
+
+def _extract_metadata_block_with_start(text: str) -> tuple[str | None, int | None]:
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    if index >= len(lines) or not _METADATA_MARKER.match(lines[index]):
+        return None, None
+    index += 1
+    block_start_line = index + 1
+    block_lines: List[str] = []
+    while index < len(lines):
+        line = lines[index]
+        if _METADATA_MARKER.match(line):
+            return "\n".join(block_lines).strip("\n"), block_start_line
+        if not line.lstrip().startswith("#"):
+            if not line.strip():
+                block_lines.append("")
+                index += 1
+                continue
+            return None, None
+        stripped = line.lstrip()[1:]
+        if stripped.startswith(" "):
+            stripped = stripped[1:]
+        block_lines.append(stripped)
+        index += 1
+    return None, None
+
+
+def _extract_metadata_block(text: str) -> str | None:
+    block, _ = _extract_metadata_block_with_start(text)
+    return block
+
+
+def _normalize_meta_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _build_template_metadata(data: Dict[str, Any]) -> TemplateMetadata:
+    name = _normalize_meta_value(data.get("name"))
+    description = _normalize_meta_value(data.get("description"))
+    fields_data = data.get("fields", [])
+    fields: List[TemplateField] = []
+    if isinstance(fields_data, list):
+        seen = set()
+        for item in fields_data:
+            if not isinstance(item, dict):
+                continue
+            token = _normalize_meta_value(item.get("token")) or ""
+            if not token:
+                continue
+            token_key = token.lower()
+            if token_key in seen:
+                continue
+            seen.add(token_key)
+            label = _normalize_meta_value(item.get("label")) or token
+            placeholder = _normalize_meta_value(item.get("placeholder")) or ""
+            field_type = _normalize_meta_value(item.get("type")) or "text"
+            default = _normalize_meta_value(item.get("default")) or ""
+            fields.append(TemplateField(
+                token=token,
+                label=label,
+                placeholder=placeholder,
+                field_type=field_type.lower(),
+                default=default,
+            ))
+    return TemplateMetadata(name=name, description=description, fields=fields)
+
+
+def parse_template_metadata(text: str) -> TemplateMetadata | None:
+    block = _extract_metadata_block(text)
+    if not block:
+        return None
+    try:
+        data = yaml.safe_load(block)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    return _build_template_metadata(data)
+
+
+def parse_template_metadata_with_error(
+    text: str,
+) -> tuple[TemplateMetadata | None, str | None, int | None]:
+    block, block_start_line = _extract_metadata_block_with_start(text)
+    if not block:
+        return None, None, None
+    try:
+        data = yaml.safe_load(block)
+    except yaml.YAMLError as exc:
+        line = None
+        if hasattr(exc, "problem_mark") and exc.problem_mark:
+            line = exc.problem_mark.line + 1
+        if line and block_start_line:
+            original_line = block_start_line + line - 1
+            return None, f"Invalid metadata YAML on line {original_line}", original_line
+        return None, "Invalid metadata YAML", block_start_line
+    if not isinstance(data, dict):
+        return None, "Metadata preamble must be a mapping.", block_start_line
+    return _build_template_metadata(data), None, None
+
+
 def _normalize_implicit_token_keys(text: str) -> str:
     """Quote implicit folder keys that are token placeholders (e.g., - {mp:title}:)."""
     lines = []
@@ -253,7 +377,13 @@ def _decorate_template_error(
     )
 
 
-def build_token_context(yaml_data: Optional[Any], title: str = "", description: str = "") -> TokenContext:
+def build_token_context(
+    yaml_data: Optional[Any],
+    title: str = "",
+    description: str = "",
+    extra_tokens: Optional[Dict[str, str]] = None,
+    resolve_extra_tokens: bool = False,
+) -> TokenContext:
     """
     Build the token substitution context from YAML data and user input.
     Includes lowercase aliases for case-insensitive matching.
@@ -274,12 +404,33 @@ def build_token_context(yaml_data: Optional[Any], title: str = "", description: 
         if token_type == "python":
             python_tokens[name.lower()] = token_value
     context.python_tokens = python_tokens
-    
+
+    # Add template-scoped tokens (override global tokens when provided)
+    normalized_extra = {}
+    if extra_tokens:
+        for key, value in extra_tokens.items():
+            if not key:
+                continue
+            token_value = "" if value is None else str(value)
+            normalized_extra[key] = token_value
+        for key in normalized_extra:
+            python_tokens.pop(key.lower(), None)
+        for key, value in normalized_extra.items():
+            context[key] = value
+
     # Add lowercase aliases for case-insensitive matching
     lowercase_aliases = {}
     for key, value in context.items():
         lowercase_aliases[key.lower()] = value
     context.update(lowercase_aliases)
+
+    if resolve_extra_tokens and normalized_extra:
+        for key, value in normalized_extra.items():
+            if not isinstance(value, str) or not value:
+                continue
+            resolved = substitute_tokens(value, context)
+            context[key] = resolved
+            context[key.lower()] = resolved
     
     return context
 
@@ -843,7 +994,15 @@ def generate_project(
 
 
 # Default YAML template for new projects
-DEFAULT_YAML = '''# Example project template.
+DEFAULT_YAML = '''# ---
+# name: Example Project Template
+# description: Template description shown as tooltip.
+# fields:
+#   - token: due_date
+#     label: Due Date
+#     placeholder: YYYY-MM-DD
+# ---
+# Example project template.
 # Each item is either a file or a folder in the project.
 # Tokens use {mp:token} and are case-insensitive.
 #
@@ -859,11 +1018,7 @@ DEFAULT_YAML = '''# Example project template.
 - file: README.md
   content: |
     # {mp:title}
-    
-    {mp:description}
-    
     ## Contact
-    
     {mp:email}
     
 - folder: src
@@ -879,7 +1034,6 @@ DEFAULT_YAML = '''# Example project template.
   - file: lesson-plan.md
     content: |
       # Lesson Plan
-      {mp:description}
   - folder: resources
 
 # Programmatic items (python result must be a list of items):

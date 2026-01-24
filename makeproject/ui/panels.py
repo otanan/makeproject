@@ -24,6 +24,7 @@ from ..styles import get_code_font
 from .. import library
 from ..highlighter import PythonHighlighter
 from ..widgets import ToggleSwitch
+from ..template_engine import parse_template_metadata
 from .editors import CodeEditor
 from .dialog_utils import style_default_dialog_button
 from .template_items import TemplateListItem, AddTemplateButton
@@ -262,13 +263,16 @@ class ProjectTemplatesPanel(QFrame):
         content = library.load_project_template(name)
         if not content:
             return None
+        metadata = parse_template_metadata(content)
+        if metadata and metadata.description:
+            return metadata.description
         lines = content.splitlines()
         if not lines:
             return None
         first_line = lines[0].strip()
-        if not first_line.startswith("#"):
+        if not first_line.startswith("#") or first_line.lstrip().startswith("# ---"):
             return None
-        return first_line
+        return first_line.lstrip("#").strip() or None
 
     def eventFilter(self, obj, event):
         """Handle keyboard events for template list."""
@@ -654,7 +658,7 @@ class ProjectTemplatesPanel(QFrame):
 
 
 class DetailsPanel(QFrame):
-    """Right top panel: title and description inputs."""
+    """Right top panel: title and custom inputs."""
 
     values_changed = pyqtSignal()
 
@@ -662,14 +666,23 @@ class DetailsPanel(QFrame):
         super().__init__(parent)
         self.setObjectName("detailsPanel")
         self.setProperty("class", "panel")
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum,
+        )
+
+        self._custom_fields = {}
+        self._custom_field_specs = []
+        self._field_animations = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         header = QLabel("DETAILS")
         header.setProperty("class", "panelHeader")
-        header.setToolTip("Project title and description for token substitution")
+        header.setToolTip("Project details for token substitution")
         layout.addWidget(header)
 
         title_label = QLabel("Title")
@@ -680,23 +693,238 @@ class DetailsPanel(QFrame):
         self.title_input.textChanged.connect(self.values_changed.emit)
         layout.addWidget(self.title_input)
 
-        desc_label = QLabel("Description")
-        layout.addWidget(desc_label)
-
-        self.desc_input = QTextEdit()
-        self.desc_input.setPlaceholderText("A brief description...")
-        self.desc_input.textChanged.connect(self.values_changed.emit)
-        self.desc_input.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Expanding
+        self._custom_fields_container = QWidget()
+        self._custom_fields_container.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Maximum,
         )
-        layout.addWidget(self.desc_input, 1)
+        self._custom_fields_layout = QVBoxLayout(self._custom_fields_container)
+        self._custom_fields_layout.setSpacing(6)
+        self._custom_fields_layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._custom_fields_container)
 
     def get_title(self) -> str:
         return self.title_input.text()
 
-    def get_description(self) -> str:
-        return self.desc_input.toPlainText()
+    def _normalize_custom_field_specs(self, fields) -> list[tuple[str, str, str, str, str, str]]:
+        specs = []
+        seen = set()
+        if not fields:
+            return specs
+        for field in fields:
+            token = self._read_field_value(field, "token")
+            if not token:
+                continue
+            token_key = token.lower()
+            if token_key in seen:
+                continue
+            seen.add(token_key)
+            label = self._read_field_value(field, "label") or token
+            placeholder = self._read_field_value(field, "placeholder") or ""
+            field_type = (
+                self._read_field_value(field, "field_type")
+                or self._read_field_value(field, "type")
+                or "text"
+            ).lower()
+            default_value = self._read_field_value(field, "default")
+            specs.append((token_key, token, label, placeholder, field_type, default_value))
+        return specs
+
+    def _read_field_value(self, field, key: str) -> str:
+        if isinstance(field, dict):
+            value = field.get(key)
+        else:
+            value = getattr(field, key, None)
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    def _clear_custom_field_widgets(self):
+        while self._custom_fields_layout.count():
+            item = self._custom_fields_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+    def set_custom_fields(self, fields, *, animate: bool = True):
+        specs = self._normalize_custom_field_specs(fields)
+        if specs == self._custom_field_specs:
+            return
+        previous_values = {
+            key: field["widget"].text()
+            for key, field in self._custom_fields.items()
+        }
+        if not animate:
+            self._custom_field_specs = specs
+            for field in list(self._custom_fields.values()):
+                container = field.get("container")
+                if container:
+                    container.setParent(None)
+                    container.deleteLater()
+            self._custom_fields = {}
+            new_order = [spec[0] for spec in specs]
+            for token_key, token, label, placeholder, field_type, default_value in specs:
+                container, label_widget, input_widget = self._create_field_widgets(
+                    label,
+                    placeholder,
+                )
+                input_widget.textChanged.connect(self.values_changed.emit)
+                if token_key in previous_values:
+                    input_widget.blockSignals(True)
+                    input_widget.setText(previous_values[token_key])
+                    input_widget.blockSignals(False)
+                container.setVisible(True)
+                container.setMaximumHeight(16777215)
+                self._custom_fields[token_key] = {
+                    "token": token,
+                    "label": label_widget,
+                    "widget": input_widget,
+                    "container": container,
+                    "field_type": field_type,
+                    "default": default_value,
+                }
+            self._rebuild_custom_fields_layout(new_order)
+            return
+        new_order = [spec[0] for spec in specs]
+        new_keys = set(new_order)
+        removed_keys = [key for key in self._custom_fields if key not in new_keys]
+        self._custom_field_specs = specs
+
+        for token_key in removed_keys:
+            field = self._custom_fields.get(token_key)
+            if field and not field.get("removing"):
+                field["removing"] = True
+                self._animate_field_removal(field["container"], token_key)
+
+        for token_key, token, label, placeholder, field_type, default_value in specs:
+            if token_key in self._custom_fields:
+                field = self._custom_fields[token_key]
+                if field.get("removing"):
+                    field["removing"] = False
+                    self._animate_field_appearance(field["container"])
+                field["label"].setText(label)
+                field["widget"].setPlaceholderText(placeholder)
+                field["default"] = default_value
+                field["field_type"] = field_type
+            else:
+                container, label_widget, input_widget = self._create_field_widgets(
+                    label,
+                    placeholder,
+                )
+                input_widget.textChanged.connect(self.values_changed.emit)
+                if token_key in previous_values:
+                    input_widget.blockSignals(True)
+                    input_widget.setText(previous_values[token_key])
+                    input_widget.blockSignals(False)
+                self._custom_fields[token_key] = {
+                    "token": token,
+                    "label": label_widget,
+                    "widget": input_widget,
+                    "container": container,
+                    "field_type": field_type,
+                    "default": default_value,
+                }
+                self._animate_field_appearance(container)
+
+        self._rebuild_custom_fields_layout(new_order + removed_keys)
+
+    def get_custom_field_values(self, apply_defaults: bool = False) -> dict[str, str]:
+        values = {}
+        for field in self._custom_fields.values():
+            if field.get("removing"):
+                continue
+            text = field["widget"].text()
+            if apply_defaults and not text and field.get("default"):
+                values[field["token"]] = field["default"]
+            else:
+                values[field["token"]] = text
+        return values
+
+    def set_custom_field_values(self, values: dict[str, str]):
+        if not values:
+            return
+        normalized = {str(key).lower(): "" if value is None else str(value)
+                      for key, value in values.items()}
+        for key, field in self._custom_fields.items():
+            if field.get("removing"):
+                continue
+            if key in normalized:
+                field["widget"].setText(normalized[key])
+
+    def clear_custom_field_values(self):
+        for field in self._custom_fields.values():
+            if field.get("removing"):
+                continue
+            field["widget"].clear()
+
+    def _create_field_widgets(self, label: str, placeholder: str):
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        label_widget = QLabel(label)
+        input_widget = QLineEdit()
+        input_widget.setPlaceholderText(placeholder)
+        layout.addWidget(label_widget)
+        layout.addWidget(input_widget)
+        container.setVisible(False)
+        return container, label_widget, input_widget
+
+    def _rebuild_custom_fields_layout(self, order: list[str]):
+        while self._custom_fields_layout.count():
+            item = self._custom_fields_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.setParent(None)
+        for token_key in order:
+            field = self._custom_fields.get(token_key)
+            if field:
+                self._custom_fields_layout.addWidget(field["container"])
+
+    def _animate_field_appearance(self, container: QWidget):
+        container.setVisible(True)
+        container.setMaximumHeight(16777215)
+        container.adjustSize()
+        target_height = container.sizeHint().height() or container.minimumSizeHint().height()
+        if target_height <= 0:
+            target_height = 48
+        container.setMaximumHeight(0)
+        animation = QPropertyAnimation(container, b"maximumHeight")
+        animation.setDuration(180)
+        animation.setStartValue(0)
+        animation.setEndValue(target_height)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.finished.connect(lambda: container.setMaximumHeight(16777215))
+        self._track_field_animation(animation)
+
+    def _animate_field_removal(self, container: QWidget, token_key: str):
+        container.setMaximumHeight(container.sizeHint().height())
+        animation = QPropertyAnimation(container, b"maximumHeight")
+        animation.setDuration(160)
+        animation.setStartValue(container.maximumHeight())
+        animation.setEndValue(0)
+        animation.setEasingCurve(QEasingCurve.Type.InCubic)
+
+        def cleanup():
+            container.setVisible(False)
+            container.setParent(None)
+            container.deleteLater()
+            self._custom_fields.pop(token_key, None)
+
+        animation.finished.connect(cleanup)
+        self._track_field_animation(animation)
+
+    def _track_field_animation(self, animation: QPropertyAnimation):
+        if not hasattr(self, "_field_animations"):
+            self._field_animations = []
+        self._field_animations.append(animation)
+
+        def drop_animation():
+            if animation in self._field_animations:
+                self._field_animations.remove(animation)
+
+        animation.finished.connect(drop_animation)
+        animation.start()
 
 
 class PreviewPanel(QFrame):

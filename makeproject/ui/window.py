@@ -27,7 +27,8 @@ from ..highlighter import YAMLHighlighter
 from ..template_engine import (
     parse_yaml, build_token_context, build_file_tree,
     generate_project, DEFAULT_YAML, YAMLParseError,
-    substitute_tokens, collect_template_references
+    substitute_tokens, collect_template_references,
+    parse_template_metadata, parse_template_metadata_with_error,
 )
 from .. import library
 from ..updater import (
@@ -75,6 +76,8 @@ class MakeProjectWindow(QMainWindow):
         self._preview_timer = QTimer()
         self._preview_timer.setSingleShot(True)
         self._preview_timer.timeout.connect(self._update_preview)
+        self._animate_fields_next = False
+        self._suppress_yaml_animation = False
 
         self._history = []
         self._history_index = 0
@@ -240,6 +243,7 @@ class MakeProjectWindow(QMainWindow):
             placeholder="",
             highlighter_cls=YAMLHighlighter,
             dark_mode=self._dark_mode,
+            preamble_newlines=True,
         )
         self.yaml_editor.setPlainText(DEFAULT_YAML)
         yaml_layout.addWidget(self.yaml_editor)
@@ -272,7 +276,6 @@ class MakeProjectWindow(QMainWindow):
         right_layout.setSpacing(12)
 
         self.details_panel = DetailsPanel()
-        self.details_panel.setFixedHeight(200)
         right_layout.addWidget(self.details_panel)
 
         self.preview_panel = PreviewPanel()
@@ -376,10 +379,10 @@ class MakeProjectWindow(QMainWindow):
         )
 
         self.yaml_editor.textChanged.connect(self._queue_yaml_history_entry)
-        self.yaml_editor.textChanged.connect(self._schedule_preview_update)
+        self.yaml_editor.textChanged.connect(self._schedule_preview_update_from_yaml)
         self.yaml_editor.textChanged.connect(self._track_unsaved_changes)
 
-        self.details_panel.values_changed.connect(self._schedule_preview_update)
+        self.details_panel.values_changed.connect(self._schedule_preview_update_without_animation)
 
         self.bottom_tabs.index_changed.connect(self.bottom_stack.setCurrentIndex)
 
@@ -387,9 +390,9 @@ class MakeProjectWindow(QMainWindow):
         self.file_templates_panel.template_delete_requested.connect(
             self._on_file_template_delete_requested
         )
-        self.file_templates_panel.templates_changed.connect(self._schedule_preview_update)
+        self.file_templates_panel.templates_changed.connect(self._schedule_preview_update_without_animation)
 
-        self.custom_tokens_panel.tokens_changed.connect(self._schedule_preview_update)
+        self.custom_tokens_panel.tokens_changed.connect(self._schedule_preview_update_without_animation)
         self.custom_tokens_panel.token_action.connect(self._on_custom_token_action)
 
     def _apply_theme(self):
@@ -471,16 +474,21 @@ class MakeProjectWindow(QMainWindow):
         """Apply YAML without creating a history entry."""
         was_suspended = self._history_suspended
         self._history_suspended = True
+        was_suppressed = self._suppress_yaml_animation
+        self._suppress_yaml_animation = True
         try:
             self.yaml_editor.setPlainText(text)
         finally:
             self._history_suspended = was_suspended
+            self._suppress_yaml_animation = was_suppressed
         self._reset_yaml_history()
 
     def _set_yaml_text(self, text: str, *, block_signals: bool):
         """Set YAML text, optionally blocking change signals."""
         was_suspended = self._history_suspended
         self._history_suspended = True
+        was_suppressed = self._suppress_yaml_animation
+        self._suppress_yaml_animation = True
         try:
             if block_signals:
                 self.yaml_editor.blockSignals(True)
@@ -489,6 +497,7 @@ class MakeProjectWindow(QMainWindow):
                 self.yaml_editor.blockSignals(False)
         finally:
             self._history_suspended = was_suspended
+            self._suppress_yaml_animation = was_suppressed
         self._reset_yaml_history()
 
     def _push_history_action(self, action: HistoryAction):
@@ -559,11 +568,12 @@ class MakeProjectWindow(QMainWindow):
         prev_name = self.project_templates_panel.get_previous_template_name(name)
         yaml_content = self.yaml_editor.toPlainText()
         title = self.details_panel.get_title()
-        desc = self.details_panel.get_description()
+        custom_values = self.details_panel.get_custom_field_values()
         self._commit_yaml_history_entry()
         self._push_history_action(HistoryAction(
-            undo=lambda n=name, c=content, wc=was_current, y=yaml_content, t=title, d=desc:
-                self._undo_delete_project_template(n, c, wc, y, t, d),
+            undo=lambda n=name, c=content, wc=was_current, y=yaml_content,
+                t=title, cv=custom_values:
+                self._undo_delete_project_template(n, c, wc, y, t, cv),
             redo=lambda n=name, wc=was_current, pn=prev_name:
                 self._redo_delete_project_template(n, wc, pn),
             label="Delete Project Template"
@@ -576,7 +586,7 @@ class MakeProjectWindow(QMainWindow):
         was_current: bool,
         yaml_content: str,
         title: str,
-        desc: str,
+        custom_values: dict[str, str],
     ):
         library.save_project_template(name, content)
         if was_current:
@@ -584,8 +594,8 @@ class MakeProjectWindow(QMainWindow):
             self.yaml_editor.setPlainText(yaml_content)
             self._reset_yaml_history()
             self.details_panel.title_input.setText(title)
-            self.details_panel.desc_input.setPlainText(desc)
-            self._schedule_preview_update()
+            self.details_panel.set_custom_field_values(custom_values)
+            self._schedule_preview_update_without_animation()
             library.set_preference("last_template", name)
         else:
             self.project_templates_panel.refresh_list()
@@ -799,7 +809,7 @@ class MakeProjectWindow(QMainWindow):
         )
         if not template_paths_changed:
             if python_settings_changed:
-                self._schedule_preview_update()
+                self._schedule_preview_update_without_animation()
             return
 
         if self._has_any_unsaved_changes():
@@ -812,7 +822,7 @@ class MakeProjectWindow(QMainWindow):
             )
             if decision != QMessageBox.StandardButton.Save:
                 if python_settings_changed:
-                    self._schedule_preview_update()
+                    self._schedule_preview_update_without_animation()
                 return
             self._save_all_changes()
 
@@ -841,7 +851,7 @@ class MakeProjectWindow(QMainWindow):
         self.custom_tokens_panel.clear_all_state()
         if self.custom_tokens_panel.has_tokens():
             self.custom_tokens_panel.select_first_token()
-        self._schedule_preview_update()
+        self._schedule_preview_update_without_animation()
 
     def _normalize_template_path(self, raw_path: str, default_path: Path) -> Path:
         if not raw_path:
@@ -1071,7 +1081,7 @@ class MakeProjectWindow(QMainWindow):
         """Create a new project with default YAML content."""
         self._set_yaml_text(DEFAULT_YAML, block_signals=False)
         self.details_panel.title_input.clear()
-        self.details_panel.desc_input.clear()
+        self.details_panel.clear_custom_field_values()
         self.preview_panel.set_project_name(self.project_templates_panel.get_template_name())
         self._show_status("New project created")
 
@@ -1115,6 +1125,44 @@ class MakeProjectWindow(QMainWindow):
             name = self.project_templates_panel.get_unique_template_name(name)
 
         content = self.yaml_editor.toPlainText()
+        original_name = name
+        metadata = parse_template_metadata(content)
+        metadata_name = metadata.name.strip() if metadata and metadata.name else ""
+        if metadata_name and metadata_name != name:
+            old_path = library.get_project_template_path(name)
+            new_path = library.get_project_template_path(metadata_name)
+            conflict = False
+            if new_path.exists():
+                if old_path.exists():
+                    try:
+                        conflict = not old_path.samefile(new_path)
+                    except OSError:
+                        conflict = True
+                else:
+                    conflict = True
+            if conflict:
+                QMessageBox.warning(
+                    self,
+                    "Template Exists",
+                    f"\"{metadata_name}\" already exists. "
+                    "Choose a different name in the metadata.",
+                )
+                return
+            if old_path.exists():
+                if not library.rename_project_template(name, metadata_name):
+                    QMessageBox.warning(
+                        self,
+                        "Rename Failed",
+                        f"Could not rename \"{name}\" to \"{metadata_name}\".",
+                    )
+                    return
+                self._on_project_template_renamed(name, metadata_name)
+            else:
+                if name in self._project_template_drafts:
+                    self._project_template_drafts[metadata_name] = self._project_template_drafts.pop(name)
+            name = metadata_name
+            if original_name != name:
+                self._project_template_drafts.pop(original_name, None)
         library.save_project_template(name, content)
         self._project_template_drafts.pop(name, None)
         self.project_templates_panel.mark_saved(name, content)
@@ -1144,7 +1192,8 @@ class MakeProjectWindow(QMainWindow):
         """Clear all project-specific panels (no template selected)."""
         self._set_yaml_text("", block_signals=True)
         self.details_panel.title_input.clear()
-        self.details_panel.desc_input.clear()
+        self.details_panel.set_custom_fields([], animate=False)
+        self.details_panel.clear_custom_field_values()
         self.preview_panel.tree.clear()
         self.preview_panel.content_view.clear()
         self.preview_panel.status_label.setText("")
@@ -1192,7 +1241,7 @@ class MakeProjectWindow(QMainWindow):
             self.project_templates_panel.set_current_template(name, content)
             self._set_yaml_text(editor_content, block_signals=True)
             self.project_templates_panel.mark_unsaved_changes(editor_content)
-            self._schedule_preview_update()
+            self._schedule_preview_update_without_animation()
             self.preview_panel.set_project_name(name)
             self._show_status(f"Loaded: {name}")
             library.set_preference("last_template", name)
@@ -1235,6 +1284,19 @@ class MakeProjectWindow(QMainWindow):
         if stripped.startswith("template:") and indent >= 2:
             indent = max(0, indent - 2)
         return " " * indent
+
+    def _schedule_preview_update_with_animation(self, animate_fields: bool):
+        self._animate_fields_next = animate_fields
+        self._schedule_preview_update()
+
+    def _schedule_preview_update_from_yaml(self):
+        if self._suppress_yaml_animation:
+            self._schedule_preview_update_with_animation(False)
+        else:
+            self._schedule_preview_update_with_animation(True)
+
+    def _schedule_preview_update_without_animation(self):
+        self._schedule_preview_update_with_animation(False)
 
     def _schedule_preview_update(self):
         """Schedule a debounced preview refresh."""
@@ -1368,7 +1430,19 @@ class MakeProjectWindow(QMainWindow):
         """Refresh the preview panel based on YAML and details."""
         yaml_text = self.yaml_editor.toPlainText()
         title = self.details_panel.get_title()
-        desc = self.details_panel.get_description()
+        metadata, meta_error, meta_line = parse_template_metadata_with_error(yaml_text)
+        if meta_error:
+            self.yaml_editor.set_error_line(meta_line)
+            self.yaml_editor.set_warning_line(None)
+            self.preview_panel.update_tree(self._last_valid_tree, meta_error)
+            return
+        animate_fields = self._animate_fields_next
+        self._animate_fields_next = False
+        self.details_panel.set_custom_fields(
+            metadata.fields if metadata else [],
+            animate=animate_fields,
+        )
+        extra_tokens = self.details_panel.get_custom_field_values()
 
         data, error = parse_yaml(yaml_text)
         if error:
@@ -1377,7 +1451,7 @@ class MakeProjectWindow(QMainWindow):
             self.preview_panel.update_tree(self._last_valid_tree, error)
             return
 
-        context = build_token_context(data, title, desc)
+        context = build_token_context(data, title, "", extra_tokens)
         warnings = self._collect_missing_template_warnings(yaml_text, context)
         warning_message, warning_line = (warnings[0] if warnings else (None, None))
         try:
@@ -1425,7 +1499,9 @@ class MakeProjectWindow(QMainWindow):
         context = build_token_context(
             data,
             self.details_panel.get_title(),
-            self.details_panel.get_description()
+            "",
+            self.details_panel.get_custom_field_values(apply_defaults=True),
+            resolve_extra_tokens=True,
         )
         try:
             tree = build_file_tree(data, context)
