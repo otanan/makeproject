@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QProgressBar, QDialog
 )
 
-from ..styles import load_qss
+from ..styles import load_qss, get_code_font
 from ..highlighter import YAMLHighlighter
 from ..template_engine import (
     parse_yaml, build_token_context, build_file_tree,
@@ -194,6 +194,26 @@ class MakeProjectWindow(QMainWindow):
         update_action.triggered.connect(lambda: self._check_for_updates(manual=True))
         help_menu.addAction(update_action)
 
+        # Font size shortcuts (Cmd+/Cmd- on macOS, Ctrl+/Ctrl- on other platforms)
+        increase_font_action = QAction("Increase Font Size", self)
+        increase_font_action.setShortcut(QKeySequence("Ctrl+="))
+        increase_font_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        increase_font_action.triggered.connect(self._increase_font_size)
+        self.addAction(increase_font_action)
+
+        # Also bind Cmd+Shift+= (Cmd++) for convenience
+        increase_font_action2 = QAction("Increase Font Size Alt", self)
+        increase_font_action2.setShortcut(QKeySequence("Ctrl++"))
+        increase_font_action2.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        increase_font_action2.triggered.connect(self._increase_font_size)
+        self.addAction(increase_font_action2)
+
+        decrease_font_action = QAction("Decrease Font Size", self)
+        decrease_font_action.setShortcut(QKeySequence("Ctrl+-"))
+        decrease_font_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        decrease_font_action.triggered.connect(self._decrease_font_size)
+        self.addAction(decrease_font_action)
+
     def _setup_ui(self):
         """Set up the main UI layout."""
         central = QWidget()
@@ -245,7 +265,7 @@ class MakeProjectWindow(QMainWindow):
             dark_mode=self._dark_mode,
             preamble_newlines=True,
         )
-        self.yaml_editor.setPlainText(DEFAULT_YAML)
+        # Don't set DEFAULT_YAML here - let _restore_last_template handle it to avoid flicker
         yaml_layout.addWidget(self.yaml_editor)
 
         center_splitter.addWidget(yaml_panel)
@@ -395,11 +415,19 @@ class MakeProjectWindow(QMainWindow):
         self.custom_tokens_panel.tokens_changed.connect(self._schedule_preview_update_without_animation)
         self.custom_tokens_panel.token_action.connect(self._on_custom_token_action)
 
+        self.preview_panel.generate_item_requested.connect(self._generate_item)
+
     def _apply_theme(self):
         """Apply the current theme stylesheet."""
         theme = "dark" if self._dark_mode else "light"
-        qss = load_qss(theme)
-        self.setStyleSheet(qss)
+        ui_font_size = library.get_ui_font_size()
+        qss = load_qss(theme, ui_font_size)
+        # Apply to application level so context menus inherit styles properly
+        app = QApplication.instance()
+        if app:
+            app.setStyleSheet(qss)
+        else:
+            self.setStyleSheet(qss)
 
         self.yaml_editor.set_dark_mode(self._dark_mode)
         self.file_templates_panel.editor.set_dark_mode(self._dark_mode)
@@ -411,6 +439,46 @@ class MakeProjectWindow(QMainWindow):
         self._dark_mode = checked
         self._apply_theme()
         library.set_preference("dark_mode", checked)
+
+    def _increase_font_size(self):
+        """Increase the editor font size by 1pt."""
+        current_size = library.get_editor_font_size()
+        if current_size < 36:
+            self._set_editor_font_size(current_size + 1)
+
+    def _decrease_font_size(self):
+        """Decrease the editor font size by 1pt."""
+        current_size = library.get_editor_font_size()
+        if current_size > 8:
+            self._set_editor_font_size(current_size - 1)
+
+    def _set_editor_font_size(self, size: int):
+        """Set the editor font size and update editors."""
+        library.set_editor_font_size(size)
+        self._apply_editor_font_size(size)
+
+    def _set_ui_font_size(self, size: int):
+        """Set the UI font size and refresh the theme."""
+        library.set_ui_font_size(size)
+        self._apply_ui_font_size(size)
+
+    def _apply_editor_font_size(self, size: int):
+        """Apply the editor font size to code editors."""
+        font = get_code_font(size)
+        self.yaml_editor.setFont(font)
+        self.file_templates_panel.editor.setFont(font)
+        self.custom_tokens_panel.apply_font_size(size)
+
+    def _apply_ui_font_size(self, size: int):
+        """Apply the UI font size by refreshing the theme stylesheet."""
+        theme = "dark" if self._dark_mode else "light"
+        qss = load_qss(theme, size)
+        # Apply to application level so context menus inherit styles properly
+        app = QApplication.instance()
+        if app:
+            app.setStyleSheet(qss)
+        else:
+            self.setStyleSheet(qss)
 
     def _toggle_maximize(self):
         """Toggle window maximized state."""
@@ -712,6 +780,8 @@ class MakeProjectWindow(QMainWindow):
         project_generation_path = library.get_project_generation_dir()
         python_interpreter_path = library.get_python_interpreter_path()
         python_preamble = library.get_python_preamble()
+        ui_font_size = library.get_ui_font_size()
+        editor_font_size = library.get_editor_font_size()
         old_python_interpreter_path = python_interpreter_path
         old_python_preamble = python_preamble or ""
         dialog = TemplatePathsDialog(
@@ -726,11 +796,25 @@ class MakeProjectWindow(QMainWindow):
             python_interpreter_path,
             library.DEFAULT_PYTHON_INTERPRETER,
             python_preamble,
+            ui_font_size,
+            editor_font_size,
             dark_mode=self._dark_mode,
             parent=self,
         )
+        # Apply font size changes in real-time as user adjusts the spinboxes
+        dialog.ui_font_size_changed.connect(self._apply_ui_font_size)
+        dialog.editor_font_size_changed.connect(self._apply_editor_font_size)
         if dialog.exec() != QDialog.DialogCode.Accepted:
+            # Revert font sizes if dialog was cancelled
+            self._apply_ui_font_size(ui_font_size)
+            self._apply_editor_font_size(editor_font_size)
             return
+
+        # Save font sizes if changed
+        if dialog.ui_font_size_was_changed():
+            library.set_ui_font_size(dialog.ui_font_size())
+        if dialog.editor_font_size_was_changed():
+            library.set_editor_font_size(dialog.editor_font_size())
 
         new_project_path = self._normalize_template_path(
             dialog.project_path_text(),
@@ -1126,43 +1210,6 @@ class MakeProjectWindow(QMainWindow):
 
         content = self.yaml_editor.toPlainText()
         original_name = name
-        metadata = parse_template_metadata(content)
-        metadata_name = metadata.name.strip() if metadata and metadata.name else ""
-        if metadata_name and metadata_name != name:
-            old_path = library.get_project_template_path(name)
-            new_path = library.get_project_template_path(metadata_name)
-            conflict = False
-            if new_path.exists():
-                if old_path.exists():
-                    try:
-                        conflict = not old_path.samefile(new_path)
-                    except OSError:
-                        conflict = True
-                else:
-                    conflict = True
-            if conflict:
-                QMessageBox.warning(
-                    self,
-                    "Template Exists",
-                    f"\"{metadata_name}\" already exists. "
-                    "Choose a different name in the metadata.",
-                )
-                return
-            if old_path.exists():
-                if not library.rename_project_template(name, metadata_name):
-                    QMessageBox.warning(
-                        self,
-                        "Rename Failed",
-                        f"Could not rename \"{name}\" to \"{metadata_name}\".",
-                    )
-                    return
-                self._on_project_template_renamed(name, metadata_name)
-            else:
-                if name in self._project_template_drafts:
-                    self._project_template_drafts[metadata_name] = self._project_template_drafts.pop(name)
-            name = metadata_name
-            if original_name != name:
-                self._project_template_drafts.pop(original_name, None)
         library.save_project_template(name, content)
         self._project_template_drafts.pop(name, None)
         self.project_templates_panel.mark_saved(name, content)
@@ -1226,9 +1273,12 @@ class MakeProjectWindow(QMainWindow):
                 self._load_project_template(last_template)
                 return
         if templates:
+            # Templates exist but no last_template - show empty view
             self.project_templates_panel.clear_current_template()
             self._clear_project_view()
             return
+        # No templates exist - show default YAML for new users
+        self._set_yaml_text(DEFAULT_YAML, block_signals=False)
         self._update_preview()
 
     def _load_project_template(self, name: str):
@@ -1442,7 +1492,7 @@ class MakeProjectWindow(QMainWindow):
             metadata.fields if metadata else [],
             animate=animate_fields,
         )
-        extra_tokens = self.details_panel.get_custom_field_values()
+        extra_tokens = self.details_panel.get_custom_field_values(apply_defaults=True)
 
         data, error = parse_yaml(yaml_text)
         if error:
@@ -1451,7 +1501,13 @@ class MakeProjectWindow(QMainWindow):
             self.preview_panel.update_tree(self._last_valid_tree, error)
             return
 
-        context = build_token_context(data, title, "", extra_tokens)
+        context = build_token_context(
+            data,
+            title,
+            "",
+            extra_tokens,
+            resolve_extra_tokens=True,
+        )
         warnings = self._collect_missing_template_warnings(yaml_text, context)
         warning_message, warning_line = (warnings[0] if warnings else (None, None))
         try:
@@ -1546,6 +1602,112 @@ class MakeProjectWindow(QMainWindow):
 
         if success:
             self._show_status(message)
+        elif message != "Generation cancelled.":
+            QMessageBox.warning(self, "Error", message)
+
+    def _find_node_by_path(self, root, target_path: str):
+        """Find a FileNode by its path within the tree."""
+        parts = target_path.split("/")
+
+        def find_in_children(node, remaining_parts, current_path=""):
+            if not remaining_parts:
+                return None
+
+            target_name = remaining_parts[0]
+            for child in node.children:
+                if child.name == target_name:
+                    child_path = f"{current_path}/{child.name}".lstrip("/")
+                    if len(remaining_parts) == 1:
+                        return child
+                    if child.is_folder:
+                        return find_in_children(child, remaining_parts[1:], child_path)
+            return None
+
+        return find_in_children(root, parts)
+
+    def _generate_item(self, item_path: str):
+        """Generate a specific file or folder from the preview."""
+        yaml_text = self.yaml_editor.toPlainText()
+        data, error = parse_yaml(yaml_text)
+        if error:
+            self.yaml_editor.set_error_line(self._extract_error_line(error))
+            QMessageBox.warning(self, "Invalid YAML", error)
+            return
+
+        context = build_token_context(
+            data,
+            self.details_panel.get_title(),
+            "",
+            self.details_panel.get_custom_field_values(apply_defaults=True),
+            resolve_extra_tokens=True,
+        )
+        try:
+            tree = build_file_tree(data, context)
+        except Exception as exc:
+            message, line = self._describe_yaml_error(exc, yaml_text)
+            self.yaml_editor.set_error_line(line)
+            QMessageBox.warning(self, "Invalid Template", message)
+            return
+
+        if not tree:
+            QMessageBox.warning(self, "No Files", "No files defined in the YAML.")
+            return
+
+        # Find the specific node to generate
+        target_node = self._find_node_by_path(tree, item_path)
+        if not target_node:
+            QMessageBox.warning(
+                self, "Item Not Found", f"Could not find '{item_path}' in the project."
+            )
+            return
+
+        output_dir = QFileDialog.getExistingDirectory(
+            self,
+            "Select Output Directory",
+            str(library.get_project_generation_dir())
+        )
+        if not output_dir:
+            return
+        output_path = Path(output_dir)
+
+        # Create a wrapper node with the target as its only child
+        # This allows generate_project to work with a single item
+        from dataclasses import replace
+        wrapper = replace(tree, children=[target_node])
+
+        def on_progress(current, total):
+            if total > 0:
+                self.progress_bar.setValue(int((current / total) * 100))
+
+        overwrite_all = False
+
+        def on_conflict(path: Path, output_root: Path, is_folder: bool):
+            nonlocal overwrite_all
+            if overwrite_all:
+                return "overwrite"
+            decision = self._prompt_file_conflict(path, output_root, is_folder)
+            if decision == "overwrite_all":
+                overwrite_all = True
+                return "overwrite"
+            return decision
+
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
+
+        success, message = generate_project(wrapper, output_path, on_progress, on_conflict)
+
+        if success:
+            self.progress_bar.setValue(100)
+            QTimer.singleShot(500, lambda: self.progress_bar.setVisible(False))
+            if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_path))):
+                if sys.platform == "darwin":
+                    os.system(f'open "{output_path}"')
+        else:
+            self.progress_bar.setVisible(False)
+
+        if success:
+            item_name = item_path.split("/")[-1]
+            self._show_status(f"Generated: {item_name}")
         elif message != "Generation cancelled.":
             QMessageBox.warning(self, "Error", message)
 

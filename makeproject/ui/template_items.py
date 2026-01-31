@@ -2,15 +2,17 @@
 Reusable list item widgets for template panels.
 """
 
-from PyQt6.QtCore import Qt, QSize, pyqtSignal
-from PyQt6.QtGui import QFontMetrics, QIcon, QPainter, QPixmap
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPropertyAnimation, QEasingCurve
+from PyQt6.QtGui import QFontMetrics, QIcon, QPainter, QPixmap, QPainterPath, QColor
 from PyQt6.QtWidgets import (
     QWidget,
     QHBoxLayout,
+    QVBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
     QSizePolicy,
+    QFrame,
 )
 
 
@@ -88,7 +90,7 @@ class InlineEdit(QLineEdit):
 
 
 class TemplateListItem(QWidget):
-    """Template list row with optional inline edit, unsaved indicator, and delete button."""
+    """Template list row with optional inline edit and unsaved indicator."""
 
     delete_clicked = pyqtSignal(str)  # template name
     rename_requested = pyqtSignal(str)  # template name
@@ -101,11 +103,9 @@ class TemplateListItem(QWidget):
         *,
         editable: bool = False,
         placeholder: str = "Template name...",
-        delete_tooltip: str = "Delete template",
-        allow_delete: bool = True,
-        delete_square: bool = False,
         badge_text: str = "",
         badge_tooltip: str = "",
+        auto_confirm_on_focus_out: bool = True,
         parent=None,
     ):
         super().__init__(parent)
@@ -113,10 +113,11 @@ class TemplateListItem(QWidget):
         self._has_unsaved = False
         self._editable = editable
         self._edit_finished = False
-        self._allow_delete = allow_delete
+        self._auto_confirm_on_focus_out = auto_confirm_on_focus_out
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 0, 0, 0)
+        # Controls the indentation of all items
+        layout.setContentsMargins(10, 0, 0, 0)
         layout.setSpacing(4)
 
         # Unsaved indicator dot
@@ -154,46 +155,18 @@ class TemplateListItem(QWidget):
         self.badge_label.setVisible(bool(badge_text) and not editable)
         layout.addWidget(self.badge_label)
 
-        self.delete_btn = QPushButton("−")
-        if delete_square:
-            self.delete_btn.setFixedSize(28, 28)
-            self.delete_btn.setSizePolicy(
-                QSizePolicy.Policy.Fixed,
-                QSizePolicy.Policy.Fixed
-            )
-        else:
-            self.delete_btn.setFixedWidth(28)
-            self.delete_btn.setSizePolicy(
-                QSizePolicy.Policy.Fixed,
-                QSizePolicy.Policy.Expanding
-            )
-        self.delete_btn.setProperty("class", "deleteButton")
-        self.delete_btn.setToolTip(delete_tooltip)
-        self.delete_btn.clicked.connect(lambda: self.delete_clicked.emit(self._name))
-        self.delete_btn.setVisible(False)
-        layout.addWidget(self.delete_btn)
+        # Maintain consistent row height (previously set by delete button)
+        self.setFixedHeight(28)
 
-        self.setMouseTracking(True)
+    def sizeHint(self):
+        return QSize(super().sizeHint().width(), 28)
 
     def mouseDoubleClickEvent(self, event):
         if not self._editable:
-            if self.delete_btn.isVisible():
-                btn_rect = self.delete_btn.geometry()
-                if btn_rect.contains(event.position().toPoint()):
-                    return super().mouseDoubleClickEvent(event)
             self.rename_requested.emit(self._name)
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
-
-    def enterEvent(self, event):
-        if not self._editable and self._allow_delete:
-            self.delete_btn.setVisible(True)
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        self.delete_btn.setVisible(False)
-        super().leaveEvent(event)
 
     def eventFilter(self, obj, event):
         from PyQt6.QtCore import QEvent
@@ -206,7 +179,8 @@ class TemplateListItem(QWidget):
                     self._cancel_edit()
                     return True
             elif event.type() == QEvent.Type.FocusOut:
-                self._confirm_or_cancel()
+                if self._auto_confirm_on_focus_out:
+                    self._confirm_or_cancel()
         return super().eventFilter(obj, event)
 
     def _confirm_or_cancel(self):
@@ -243,16 +217,17 @@ class TemplateListItem(QWidget):
 
 
 class AddTemplateButton(QWidget):
-    """Row widget for the + button below template lists."""
+    """Row widget for the + button and folder button below template lists."""
 
     clicked = pyqtSignal()
+    folder_clicked = pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, show_folder_button: bool = True, parent=None):
         super().__init__(parent)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setContentsMargins(10, 0, 0, 0)
+        layout.setSpacing(4)
 
         self.add_btn = QPushButton("+")
         self.add_btn.setFixedSize(28, 28)
@@ -261,10 +236,18 @@ class AddTemplateButton(QWidget):
         self.add_btn.setToolTip("Create new template")
         self.add_btn.clicked.connect(self.clicked.emit)
         layout.addWidget(self.add_btn)
-        layout.setAlignment(
-            self.add_btn,
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        )
+
+        self.folder_btn = QPushButton("📁")
+        self.folder_btn.setFixedSize(28, 28)
+        self.folder_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.folder_btn.setProperty("class", "addButton")
+        self.folder_btn.setToolTip("Create new folder")
+        # Make the folder icon ~10% smaller than the + icon
+        self.folder_btn.setStyleSheet("font-size: 12px;")
+        self.folder_btn.clicked.connect(self.folder_clicked.emit)
+        self.folder_btn.setVisible(show_folder_button)
+        layout.addWidget(self.folder_btn)
+
         layout.addStretch(1)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setFixedHeight(self.add_btn.height())
@@ -275,3 +258,182 @@ class AddTemplateButton(QWidget):
 
     def minimumSizeHint(self):
         return QSize(0, self.add_btn.height())
+
+
+class FolderListItem(QWidget):
+    """Collapsible folder row for template lists."""
+
+    delete_clicked = pyqtSignal(str)  # folder name
+    rename_requested = pyqtSignal(str)  # folder name
+    name_edited = pyqtSignal(str, str)  # old_name, new_name
+    name_canceled = pyqtSignal(str)  # old_name
+    toggled = pyqtSignal(str, bool)  # folder name, expanded
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        editable: bool = False,
+        placeholder: str = "Folder name...",
+        expanded: bool = True,
+        auto_confirm_on_focus_out: bool = True,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._name = name
+        self._editable = editable
+        self._expanded = expanded
+        self._edit_finished = False
+        self._auto_confirm_on_focus_out = auto_confirm_on_focus_out
+        self._dark_mode = True
+
+        layout = QHBoxLayout(self)
+        # Same indentation as TemplateListItem (10px)
+        layout.setContentsMargins(10, 0, 0, 0)
+        layout.setSpacing(4)
+
+        # Disclosure triangle
+        self.disclosure_btn = QPushButton()
+        self.disclosure_btn.setFixedSize(16, 16)
+        self.disclosure_btn.setProperty("class", "disclosureButton")
+        self.disclosure_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.disclosure_btn.clicked.connect(self._toggle_expanded)
+        self._update_disclosure_icon()
+        layout.addWidget(self.disclosure_btn)
+
+        # Folder icon
+        self.folder_icon = QLabel("📁")
+        self.folder_icon.setFixedWidth(18)
+        layout.addWidget(self.folder_icon)
+
+        # Name label or inline edit
+        if editable:
+            self.name_edit = InlineEdit()
+            self.name_edit.setPlaceholderText(placeholder)
+            self.name_edit.setProperty("class", "inlineEdit")
+            self.name_edit.installEventFilter(self)
+            self.name_edit.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Preferred
+            )
+            layout.addWidget(self.name_edit)
+            self.name_label = None
+        else:
+            self.name_label = QLabel(name)
+            self.name_label.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Preferred
+            )
+            layout.addWidget(self.name_label)
+            self.name_edit = None
+
+        # Maintain consistent row height (previously set by delete button)
+        self.setFixedHeight(28)
+
+    def sizeHint(self):
+        return QSize(super().sizeHint().width(), 28)
+
+    def _update_disclosure_icon(self):
+        """Update the disclosure triangle based on expanded state."""
+        # Use simple unicode triangles
+        if self._expanded:
+            self.disclosure_btn.setText("▼")
+        else:
+            self.disclosure_btn.setText("▶")
+        # Update styling based on dark mode
+        # Must override padding and min-width from base QPushButton style
+        color = "#6C7086" if self._dark_mode else "#9CA3AF"
+        self.disclosure_btn.setStyleSheet(
+            f"QPushButton {{ color: {color}; background: transparent; border: none; "
+            f"font-size: 10px; padding: 0px; min-width: 0px; }}"
+        )
+
+    def set_dark_mode(self, dark_mode: bool):
+        """Update colors for dark/light mode."""
+        self._dark_mode = dark_mode
+        self._update_disclosure_icon()
+
+    def _toggle_expanded(self):
+        self._expanded = not self._expanded
+        self._update_disclosure_icon()
+        self.toggled.emit(self._name, self._expanded)
+
+    def is_expanded(self) -> bool:
+        return self._expanded
+
+    def set_expanded(self, expanded: bool):
+        if self._expanded != expanded:
+            self._expanded = expanded
+            self._update_disclosure_icon()
+
+    def mouseDoubleClickEvent(self, event):
+        if not self._editable:
+            self.rename_requested.emit(self._name)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def eventFilter(self, obj, event):
+        from PyQt6.QtCore import QEvent
+        if obj == self.name_edit:
+            if event.type() == QEvent.Type.KeyPress:
+                if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                    self._confirm_or_cancel()
+                    return True
+                if event.key() == Qt.Key.Key_Escape:
+                    self._cancel_edit()
+                    return True
+            elif event.type() == QEvent.Type.FocusOut:
+                if self._auto_confirm_on_focus_out:
+                    self._confirm_or_cancel()
+        return super().eventFilter(obj, event)
+
+    def _confirm_or_cancel(self):
+        if self._edit_finished or not self.name_edit:
+            return
+        new_name = self.name_edit.text().strip()
+        self._edit_finished = True
+        if new_name:
+            self.name_edited.emit(self._name, new_name)
+        else:
+            self.name_canceled.emit(self._name)
+
+    def _cancel_edit(self):
+        if self._edit_finished:
+            return
+        self._edit_finished = True
+        if self.name_edit:
+            self.name_canceled.emit(self._name)
+
+    def get_name(self) -> str:
+        if self._editable and self.name_edit:
+            return self.name_edit.text().strip()
+        return self._name
+
+    def focus_edit(self):
+        if self.name_edit:
+            self.name_edit.setFocus()
+            self.name_edit.selectAll()
+
+
+class DropIndicator(QFrame):
+    """Visual indicator shown when dragging items."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(2)
+        self.setStyleSheet("background-color: #1ABC9D;")
+        self.hide()
+
+
+class FolderDropTarget(QFrame):
+    """Visual overlay shown when dragging over a folder."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(
+            "background-color: rgba(26, 188, 157, 0.2); "
+            "border: 2px dashed #1ABC9D; "
+            "border-radius: 4px;"
+        )
+        self.hide()

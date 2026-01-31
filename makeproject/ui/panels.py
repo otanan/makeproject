@@ -15,7 +15,7 @@ from PyQt6.QtGui import (
     QPainterPath, QPixmap
 )
 from PyQt6.QtWidgets import (
-    QFrame, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QDialog, QFrame, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QListWidget, QListWidgetItem, QTextEdit, QTreeWidget,
     QTreeWidgetItem, QMessageBox, QMenu, QSplitter, QSizePolicy
 )
@@ -27,7 +27,8 @@ from ..widgets import ToggleSwitch
 from ..template_engine import parse_template_metadata
 from .editors import CodeEditor
 from .dialog_utils import style_default_dialog_button
-from .template_items import TemplateListItem, AddTemplateButton
+from .delete_confirmation_dialog import DeleteConfirmationDialog, DeleteFolderConfirmationDialog
+from .template_items import TemplateListItem, AddTemplateButton, FolderListItem
 
 
 def _create_disclosure_icons():
@@ -110,8 +111,14 @@ def get_disclosure_stylesheet(dark_mode: bool = True) -> str:
     """
 
 
+# Data roles for template tree items
+ROLE_ITEM_TYPE = Qt.ItemDataRole.UserRole  # "template", "folder", or "add_button"
+ROLE_ITEM_PATH = Qt.ItemDataRole.UserRole + 1  # Full path (e.g., "folder/template")
+ROLE_FOLDER_EXPANDED = Qt.ItemDataRole.UserRole + 2  # Folder expanded state
+
+
 class ProjectTemplatesPanel(QFrame):
-    """Left panel: list of project templates with create/rename/delete."""
+    """Left panel: list of project templates with create/rename/delete and folder support."""
 
     template_selected = pyqtSignal(str)
     save_requested = pyqtSignal()
@@ -131,7 +138,9 @@ class ProjectTemplatesPanel(QFrame):
         self._original_content = ""
         self._draft_store = draft_store if draft_store is not None else {}
         self._editing_new = False
+        self._new_template_folder = None  # Folder to create new template in
         self._renaming_template = None
+        self._renaming_folder = None
         self._draft_name_seed = ""
         self._refreshing = False
         self._refresh_pending = False
@@ -143,6 +152,16 @@ class ProjectTemplatesPanel(QFrame):
         self._mouse_clear_timer = QTimer()
         self._mouse_clear_timer.setSingleShot(True)
         self._mouse_clear_timer.timeout.connect(self._clear_mouse_click_flag)
+        
+        # Folder expansion states
+        self._folder_expanded = {}
+        
+        # Drag and drop state
+        self._drag_start_pos = None
+        self._drag_source_name = None
+        self._drop_indicator_index = -1
+        self._drop_target_folder = None
+        self._drag_hover_item = None  # Currently highlighted drop target
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -154,6 +173,8 @@ class ProjectTemplatesPanel(QFrame):
         layout.addWidget(header)
 
         self.template_list = QListWidget()
+        self.template_list.setSpacing(0)
+        self.template_list.setViewportMargins(0, 0, 0, 0)
         self.template_list.itemClicked.connect(self._on_item_clicked)
         self.template_list.itemDoubleClicked.connect(self._on_item_double_clicked)
         self.template_list.currentItemChanged.connect(self._on_current_item_changed)
@@ -161,69 +182,143 @@ class ProjectTemplatesPanel(QFrame):
         self.template_list.viewport().installEventFilter(self)
         self.template_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.template_list.customContextMenuRequested.connect(self._show_context_menu)
+        
+        # Enable drag and drop (use DragDrop mode, not InternalMove, to prevent Qt's auto-reordering)
+        self.template_list.setDragEnabled(True)
+        self.template_list.setAcceptDrops(True)
+        self.template_list.setDragDropMode(QListWidget.DragDropMode.DragDrop)
+        self.template_list.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.template_list.viewport().setAcceptDrops(True)
+        
         layout.addWidget(self.template_list)
 
         self.refresh_list()
 
+    def _get_folder_display_name(self, folder: str) -> str:
+        """Get display name for a folder (last component of path)."""
+        return Path(folder).name
+
+    def _get_template_display_name(self, name: str) -> str:
+        """Get display name for a template (last component without folder)."""
+        return Path(name).name
+
+    def _get_template_folder(self, name: str) -> str | None:
+        """Get the folder a template is in, or None if at root."""
+        path = Path(name)
+        if len(path.parts) > 1:
+            return path.parts[0]
+        return None
+
     def refresh_list(self):
-        """Refresh the template list from disk."""
+        """Refresh the template list from disk with folder support."""
         if self._refreshing:
             self._refresh_pending = True
             return
         self._refreshing = True
+        if self._editing_new:
+            self._capture_new_template_name()
         self.template_list.clear()
+        
         templates = library.list_project_templates()
+        folders = library.list_project_template_folders()
         unsaved_names = set(self._draft_store.keys())
         if self._has_unsaved_changes and self._current_template:
             unsaved_names.add(self._current_template)
 
-        for name in templates:
-            if name == self._renaming_template:
+        # Track which templates are in folders
+        templates_in_folders = set()
+        for folder in folders:
+            for t in templates:
+                if t.startswith(f"{folder}/"):
+                    templates_in_folders.add(t)
+
+        # Add folders first
+        for folder in folders:
+            if folder == self._renaming_folder:
                 item = QListWidgetItem()
-                widget = TemplateListItem(
-                    name,
+                widget = FolderListItem(
+                    folder,
                     editable=True,
-                    placeholder="Template name...",
+                    placeholder="Folder name...",
+                    expanded=self._folder_expanded.get(folder, True),
                 )
-                widget.name_edited.connect(self._on_rename_confirmed)
-                widget.name_canceled.connect(self._on_rename_canceled)
-                widget.name_edit.setText(name)
+                widget.name_edited.connect(self._on_folder_rename_confirmed)
+                widget.name_canceled.connect(self._on_folder_rename_canceled)
+                widget.name_edit.setText(folder)
+                item.setData(ROLE_ITEM_TYPE, "folder")
+                item.setData(ROLE_ITEM_PATH, folder)
                 item.setSizeHint(widget.sizeHint())
                 self.template_list.addItem(item)
                 self.template_list.setItemWidget(item, widget)
-                self.template_list.setCurrentItem(item)
                 QTimer.singleShot(50, widget.focus_edit)
             else:
+                expanded = self._folder_expanded.get(folder, True)
                 item = QListWidgetItem()
-                widget = TemplateListItem(
-                    name,
-                    allow_delete=True,
+                widget = FolderListItem(
+                    folder,
+                    expanded=expanded,
                 )
-                tooltip = self._get_template_tooltip(name)
-                if tooltip:
-                    widget.setToolTip(tooltip)
-                widget.rename_requested.connect(self._start_rename_template)
-                widget.delete_clicked.connect(self._delete_template)
-                if name in unsaved_names:
-                    widget.set_unsaved(True)
+                widget.rename_requested.connect(self._start_rename_folder)
+                widget.delete_clicked.connect(self._delete_folder)
+                widget.toggled.connect(self._on_folder_toggled)
+                item.setData(ROLE_ITEM_TYPE, "folder")
+                item.setData(ROLE_ITEM_PATH, folder)
                 item.setSizeHint(widget.sizeHint())
                 self.template_list.addItem(item)
                 self.template_list.setItemWidget(item, widget)
 
-                if name == self._current_template:
+            # Add templates inside folder if expanded
+            if self._folder_expanded.get(folder, True):
+                folder_templates = [t for t in templates if t.startswith(f"{folder}/")]
+                for name in folder_templates:
+                    self._add_template_item(name, unsaved_names, indent=True)
+                
+                # Add new template input inside this folder if creating here
+                if self._editing_new and self._new_template_folder == folder:
+                    item = QListWidgetItem()
+                    widget = TemplateListItem(
+                        "",
+                        editable=True,
+                        placeholder="Template name...",
+                        auto_confirm_on_focus_out=False,
+                    )
+                    widget.name_edited.connect(self._on_new_name_confirmed)
+                    widget.name_canceled.connect(self._on_new_name_canceled)
+                    if self._draft_name_seed:
+                        widget.name_edit.setText(self._draft_name_seed)
+                    item.setData(ROLE_ITEM_TYPE, "template")
+                    item.setData(ROLE_ITEM_PATH, "")
+                    item.setSizeHint(widget.sizeHint())
+                    # Add indentation for folder context
+                    layout = widget.layout()
+                    if layout:
+                        margins = layout.contentsMargins()
+                        layout.setContentsMargins(margins.left() + 20, margins.top(), margins.right(), margins.bottom())
+                    self.template_list.addItem(item)
+                    self.template_list.setItemWidget(item, widget)
                     self.template_list.setCurrentItem(item)
+                    QTimer.singleShot(50, widget.focus_edit)
 
-        if self._editing_new:
+        # Add templates at root level (not in any folder)
+        for name in templates:
+            if name not in templates_in_folders:
+                self._add_template_item(name, unsaved_names, indent=False)
+
+        # Handle editing new template (only at root level)
+        if self._editing_new and not self._new_template_folder:
             item = QListWidgetItem()
             widget = TemplateListItem(
                 "",
                 editable=True,
                 placeholder="Template name...",
+                auto_confirm_on_focus_out=False,
             )
             widget.name_edited.connect(self._on_new_name_confirmed)
             widget.name_canceled.connect(self._on_new_name_canceled)
             if self._draft_name_seed:
                 widget.name_edit.setText(self._draft_name_seed)
+            item.setData(ROLE_ITEM_TYPE, "template")
+            item.setData(ROLE_ITEM_PATH, "")
             item.setSizeHint(widget.sizeHint())
             self.template_list.addItem(item)
             self.template_list.setItemWidget(item, widget)
@@ -233,10 +328,12 @@ class ProjectTemplatesPanel(QFrame):
             item = QListWidgetItem()
             widget = TemplateListItem(
                 "untitled project",
-                allow_delete=False,
+                auto_confirm_on_focus_out=False,
             )
             widget.set_unsaved(True)
             widget.rename_requested.connect(self._start_draft_naming)
+            item.setData(ROLE_ITEM_TYPE, "template")
+            item.setData(ROLE_ITEM_PATH, "untitled project")
             item.setSizeHint(widget.sizeHint())
             self.template_list.addItem(item)
             self.template_list.setItemWidget(item, widget)
@@ -245,6 +342,8 @@ class ProjectTemplatesPanel(QFrame):
         add_item = QListWidgetItem()
         add_widget = AddTemplateButton()
         add_widget.clicked.connect(self._create_new_template)
+        add_widget.folder_clicked.connect(self._create_new_folder)
+        add_item.setData(ROLE_ITEM_TYPE, "add_button")
         add_item.setSizeHint(QSize(0, add_widget.sizeHint().height()))
         add_item.setFlags(
             add_item.flags()
@@ -258,6 +357,139 @@ class ProjectTemplatesPanel(QFrame):
         if self._refresh_pending:
             self._refresh_pending = False
             QTimer.singleShot(0, self.refresh_list)
+
+    def _create_new_folder(self):
+        """Create a new folder and show rename input."""
+        folder_name = self._generate_unique_folder_name("New Folder")
+        library.create_project_template_folder(folder_name)
+        self._folder_expanded[folder_name] = True
+        self._renaming_folder = folder_name
+        self.refresh_list()
+        self._select_item_by_path(folder_name)
+        self.template_list.setFocus()
+
+    def _add_template_item(self, name: str, unsaved_names: set, indent: bool = False):
+        """Add a template item to the list."""
+        display_name = self._get_template_display_name(name)
+        
+        if name == self._renaming_template:
+            item = QListWidgetItem()
+            widget = TemplateListItem(
+                display_name,
+                editable=True,
+                placeholder="Template name...",
+            )
+            widget.name_edited.connect(
+                lambda old, new, n=name: self._on_rename_confirmed(n, new)
+            )
+            widget.name_canceled.connect(lambda old: self._on_rename_canceled(name))
+            widget.name_edit.setText(display_name)
+            if indent:
+                widget.setContentsMargins(20, 0, 0, 0)
+            item.setData(ROLE_ITEM_TYPE, "template")
+            item.setData(ROLE_ITEM_PATH, name)
+            item.setSizeHint(widget.sizeHint())
+            self.template_list.addItem(item)
+            self.template_list.setItemWidget(item, widget)
+            self.template_list.setCurrentItem(item)
+            QTimer.singleShot(50, widget.focus_edit)
+        else:
+            item = QListWidgetItem()
+            widget = TemplateListItem(
+                display_name,
+            )
+            tooltip = self._get_template_tooltip(name)
+            if tooltip:
+                widget.setToolTip(tooltip)
+            widget.rename_requested.connect(lambda n=name: self._start_rename_template(n))
+            widget.delete_clicked.connect(lambda n=name: self._delete_template(n))
+            if name in unsaved_names:
+                widget.set_unsaved(True)
+            if indent:
+                # Add left margin for indentation
+                layout = widget.layout()
+                if layout:
+                    margins = layout.contentsMargins()
+                    layout.setContentsMargins(20, margins.top(), margins.right(), margins.bottom())
+            item.setData(ROLE_ITEM_TYPE, "template")
+            item.setData(ROLE_ITEM_PATH, name)
+            item.setSizeHint(widget.sizeHint())
+            self.template_list.addItem(item)
+            self.template_list.setItemWidget(item, widget)
+
+            if name == self._current_template:
+                self.template_list.setCurrentItem(item)
+
+    def _on_folder_toggled(self, folder: str, expanded: bool):
+        """Handle folder expand/collapse."""
+        self._folder_expanded[folder] = expanded
+        self.refresh_list()
+        self._select_item_by_path(folder)
+
+    def _select_item_by_path(self, path: str):
+        """Select an item in the list by its path."""
+        for i in range(self.template_list.count()):
+            item = self.template_list.item(i)
+            if item and item.data(ROLE_ITEM_PATH) == path:
+                self.template_list.setCurrentItem(item)
+                return
+
+    def _start_rename_folder(self, folder: str):
+        """Start renaming a folder."""
+        self._renaming_folder = folder
+        self.refresh_list()
+
+    def _on_folder_rename_confirmed(self, old_name: str, new_name: str):
+        """Handle folder rename confirmation."""
+        self._renaming_folder = None
+        if old_name != new_name and new_name:
+            if library.rename_project_template_folder(old_name, new_name):
+                # Update expansion state
+                if old_name in self._folder_expanded:
+                    self._folder_expanded[new_name] = self._folder_expanded.pop(old_name)
+                # Update current template path if it was in this folder
+                if self._current_template and self._current_template.startswith(f"{old_name}/"):
+                    new_template = new_name + self._current_template[len(old_name):]
+                    self._current_template = new_template
+        self.refresh_list()
+
+    def _on_folder_rename_canceled(self, old_name: str):
+        """Handle folder rename cancellation."""
+        self._renaming_folder = None
+        self.refresh_list()
+
+    def _delete_folder(self, folder: str):
+        """Delete a folder and all its contents."""
+        templates_in_folder = library.get_project_templates_in_folder(folder)
+        dialog = DeleteFolderConfirmationDialog(
+            folder, len(templates_in_folder), parent=self
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        
+        library.delete_project_template_folder(folder)
+        self._folder_expanded.pop(folder, None)
+        
+        # Clear current template if it was in the deleted folder
+        if self._current_template and self._current_template.startswith(f"{folder}/"):
+            self._current_template = None
+            self._has_unsaved_changes = False
+            self._original_content = ""
+            self.clear_requested.emit()
+        
+        self.refresh_list()
+
+    def _generate_unique_folder_name(self, base_name: str) -> str:
+        """Generate a unique folder name."""
+        existing = set(library.list_project_template_folders())
+        if base_name not in existing:
+            return base_name
+        index = 1
+        while True:
+            candidate = f"{base_name} ({index})"
+            if candidate not in existing:
+                return candidate
+            index += 1
 
     def _get_template_tooltip(self, name: str) -> str | None:
         content = library.load_project_template(name)
@@ -275,15 +507,64 @@ class ProjectTemplatesPanel(QFrame):
         return first_line.lstrip("#").strip() or None
 
     def eventFilter(self, obj, event):
-        """Handle keyboard events for template list."""
-        from PyQt6.QtCore import QEvent
+        """Handle keyboard and drag-drop events for template list."""
+        from PyQt6.QtCore import QEvent, QMimeData
+        from PyQt6.QtGui import QDrag
+        
         if obj in (self.template_list, self.template_list.viewport()):
             if event.type() == QEvent.Type.MouseButtonPress:
                 self._mouse_click_in_progress = True
-            elif event.type() in (QEvent.Type.MouseButtonRelease, QEvent.Type.MouseButtonDblClick):
+                if event.button() == Qt.MouseButton.LeftButton:
+                    self._drag_start_pos = event.position().toPoint()
+                    item = self.template_list.itemAt(self._drag_start_pos)
+                    if item:
+                        item_type = item.data(ROLE_ITEM_TYPE)
+                        if item_type == "template":
+                            self._drag_source_name = item.data(ROLE_ITEM_PATH)
+                        else:
+                            self._drag_source_name = None
+                    else:
+                        self._drag_source_name = None
+                        
+            elif event.type() == QEvent.Type.MouseMove:
+                if (self._drag_start_pos is not None 
+                    and self._drag_source_name is not None
+                    and event.buttons() & Qt.MouseButton.LeftButton):
+                    distance = (event.position().toPoint() - self._drag_start_pos).manhattanLength()
+                    if distance >= 10:  # Drag threshold
+                        self._start_drag()
+                        return True
+                        
+            elif event.type() == QEvent.Type.MouseButtonRelease:
+                self._drag_start_pos = None
+                self._drag_source_name = None
                 self._mouse_clear_timer.start(0)
+                
+            elif event.type() == QEvent.Type.DragEnter:
+                if event.mimeData().hasFormat("application/x-makeproject-template"):
+                    event.acceptProposedAction()
+                    return True
+                    
+            elif event.type() == QEvent.Type.DragMove:
+                if event.mimeData().hasFormat("application/x-makeproject-template"):
+                    drop_pos = event.position().toPoint()
+                    target_item = self.template_list.itemAt(drop_pos)
+                    self._update_drag_hover(target_item)
+                    event.acceptProposedAction()
+                    return True
+                    
+            elif event.type() == QEvent.Type.Drop:
+                if event.mimeData().hasFormat("application/x-makeproject-template"):
+                    self._clear_drag_hover()
+                    self._handle_drop(event)
+                    return True
+                    
+            elif event.type() == QEvent.Type.DragLeave:
+                self._clear_drag_hover()
+                
             elif event.type() == QEvent.Type.FocusOut:
                 self._finalize_pending_click()
+                
             elif event.type() == QEvent.Type.KeyPress:
                 if self._pending_click_name or self._click_timer.isActive():
                     self._finalize_pending_click()
@@ -293,31 +574,262 @@ class ProjectTemplatesPanel(QFrame):
                     current_row = self.template_list.currentRow()
                     if current_row >= self.template_list.count() - 2:
                         return True
+                elif key == Qt.Key.Key_Left:
+                    # Collapse folder when pressing left arrow
+                    current = self.template_list.currentItem()
+                    if current:
+                        item_type = current.data(ROLE_ITEM_TYPE)
+                        if item_type == "folder":
+                            folder = current.data(ROLE_ITEM_PATH)
+                            if folder and self._folder_expanded.get(folder, True):
+                                self._folder_expanded[folder] = False
+                                self.refresh_list()
+                                self._select_item_by_path(folder)
+                                return True
+                elif key == Qt.Key.Key_Right:
+                    # Expand folder when pressing right arrow
+                    current = self.template_list.currentItem()
+                    if current:
+                        item_type = current.data(ROLE_ITEM_TYPE)
+                        if item_type == "folder":
+                            folder = current.data(ROLE_ITEM_PATH)
+                            if folder and not self._folder_expanded.get(folder, True):
+                                self._folder_expanded[folder] = True
+                                self.refresh_list()
+                                self._select_item_by_path(folder)
+                                return True
                 elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                     current = self.template_list.currentItem()
                     if current:
+                        item_type = current.data(ROLE_ITEM_TYPE)
                         widget = self.template_list.itemWidget(current)
-                        if isinstance(widget, TemplateListItem) and not widget._editable:
-                            name = widget.get_name()
-                            if name:
-                                if widget._allow_delete:
-                                    self._renaming_template = name
+                        if item_type == "template" and isinstance(widget, TemplateListItem) and not widget._editable:
+                            path = current.data(ROLE_ITEM_PATH)
+                            if path:
+                                if path == "untitled project" and self._current_template is None and self._has_unsaved_changes:
+                                    self._start_draft_naming(path)
+                                else:
+                                    self._renaming_template = path
                                     self.refresh_list()
-                                elif self._current_template is None and self._has_unsaved_changes:
-                                    self._start_draft_naming(name)
+                                return True
+                        elif item_type == "folder" and isinstance(widget, FolderListItem) and not widget._editable:
+                            folder = current.data(ROLE_ITEM_PATH)
+                            if folder:
+                                self._start_rename_folder(folder)
                                 return True
         return super().eventFilter(obj, event)
+
+    def _start_drag(self):
+        """Initiate a drag operation for a template."""
+        from PyQt6.QtCore import QMimeData
+        from PyQt6.QtGui import QDrag, QPixmap, QPainter, QFont
+        
+        if not self._drag_source_name:
+            return
+            
+        drag = QDrag(self.template_list)
+        mime_data = QMimeData()
+        mime_data.setData("application/x-makeproject-template", self._drag_source_name.encode())
+        drag.setMimeData(mime_data)
+        
+        # Create visual drag feedback
+        display_name = self._get_template_display_name(self._drag_source_name)
+        font = self.template_list.font()
+        metrics = self.template_list.fontMetrics()
+        text_width = metrics.horizontalAdvance(display_name) + 24
+        text_height = metrics.height() + 12
+        
+        pixmap = QPixmap(text_width, text_height)
+        pixmap.fill(QColor(26, 188, 157, 200))  # Teal with transparency
+        
+        painter = QPainter(pixmap)
+        painter.setFont(font)
+        painter.setPen(QColor(255, 255, 255))
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, display_name)
+        painter.end()
+        
+        drag.setPixmap(pixmap)
+        drag.setHotSpot(QPoint(text_width // 2, text_height // 2))
+        
+        # Execute drag
+        drag.exec(Qt.DropAction.MoveAction)
+        
+        self._drag_start_pos = None
+        self._drag_source_name = None
+
+    def _handle_drop(self, event):
+        """Handle a drop event for folder creation or moving."""
+        source_name = event.mimeData().data("application/x-makeproject-template").data().decode()
+        drop_pos = event.position().toPoint()
+        target_item = self.template_list.itemAt(drop_pos)
+        
+        if target_item is None:
+            # Refresh to reset any Qt-internal reordering
+            self.refresh_list()
+            return
+            
+        target_type = target_item.data(ROLE_ITEM_TYPE)
+        target_path = target_item.data(ROLE_ITEM_PATH)
+        
+        # Ignore drops on add_button - it should have no effect
+        if target_type == "add_button":
+            self.refresh_list()
+            return
+        
+        if target_type == "folder":
+            # Drop onto folder - move template into folder
+            source_folder = self._get_template_folder(source_name)
+            if source_folder == target_path:
+                # Already in this folder
+                self.refresh_list()
+                return
+            new_name = library.move_project_template_to_folder(source_name, target_path)
+            if new_name:
+                if self._current_template == source_name:
+                    self._current_template = new_name
+                    self.template_renamed.emit(source_name, new_name)
+            self.refresh_list()
+                
+        elif target_type == "template":
+            # Drop onto template - create new folder containing both OR move out of folder
+            if source_name == target_path:
+                self.refresh_list()
+                return
+            source_folder = self._get_template_folder(source_name)
+            target_folder = self._get_template_folder(target_path)
+            
+            # If both templates are in the same folder (or both at root), create a new subfolder
+            if source_folder == target_folder:
+                # First, create folder with temporary name and move templates
+                temp_folder = self._generate_unique_folder_name("New Folder")
+                library.create_project_template_folder(temp_folder)
+                self._folder_expanded[temp_folder] = True
+                
+                # Move both templates into the folder
+                for template_name in [source_name, target_path]:
+                    new_name = library.move_project_template_to_folder(template_name, temp_folder)
+                    if new_name and self._current_template == template_name:
+                        self._current_template = new_name
+                        self.template_renamed.emit(template_name, new_name)
+                
+                # Now show rename input for the folder
+                self._renaming_folder = temp_folder
+                self.refresh_list()
+                self._select_item_by_path(temp_folder)
+                self.template_list.setFocus()
+            else:
+                # Move source to target's folder (or root if target has no folder)
+                if target_folder:
+                    new_name = library.move_project_template_to_folder(source_name, target_folder)
+                else:
+                    new_name = library.move_project_template_out_of_folder(source_name)
+                if new_name:
+                    if self._current_template == source_name:
+                        self._current_template = new_name
+                        self.template_renamed.emit(source_name, new_name)
+                self.refresh_list()
+
+    def _update_drag_hover(self, target_item):
+        """Update the visual highlight for the current drag hover target."""
+        if target_item == self._drag_hover_item:
+            return
+        
+        # Clear previous highlights
+        self._clear_drag_hover()
+        
+        if target_item is None:
+            return
+            
+        # Don't highlight the source item being dragged
+        target_path = target_item.data(ROLE_ITEM_PATH)
+        if target_path == self._drag_source_name:
+            return
+            
+        target_type = target_item.data(ROLE_ITEM_TYPE)
+        
+        # Don't highlight the add button
+        if target_type == "add_button":
+            return
+        
+        # Check if source is in a folder
+        source_folder = self._get_template_folder(self._drag_source_name) if self._drag_source_name else None
+        target_folder = None
+        if target_type == "template":
+            target_folder = self._get_template_folder(target_path)
+        elif target_type == "folder":
+            # Hovering over a folder means we'd move INTO it, not to root
+            target_folder = target_path
+        
+        # If dragging from a folder to ROOT level, highlight all ROOT-LEVEL items
+        # (templates not in any folder, plus folder headers - but not items inside other folders)
+        if source_folder and target_folder is None:
+            self._drag_hover_items = []
+            for i in range(self.template_list.count()):
+                item = self.template_list.item(i)
+                item_type = item.data(ROLE_ITEM_TYPE)
+                item_path = item.data(ROLE_ITEM_PATH)
+                
+                # Skip the source item and add button
+                if item_path == self._drag_source_name or item_type == "add_button":
+                    continue
+                
+                # Only highlight root-level items
+                if item_type == "folder":
+                    # Folder headers are at root level (but skip source's folder)
+                    if item_path != source_folder:
+                        widget = self.template_list.itemWidget(item)
+                        if widget:
+                            widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.3); border-radius: 4px;")
+                            self._drag_hover_items.append(item)
+                elif item_type == "template":
+                    # Only templates at root (not in any folder)
+                    item_folder = self._get_template_folder(item_path)
+                    if item_folder is None:
+                        widget = self.template_list.itemWidget(item)
+                        if widget:
+                            widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.3); border-radius: 4px;")
+                            self._drag_hover_items.append(item)
+        else:
+            # Normal single-item highlight
+            self._drag_hover_item = target_item
+            widget = self.template_list.itemWidget(target_item)
+            if widget:
+                widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.3); border-radius: 4px;")
+
+    def _clear_drag_hover(self):
+        """Clear the visual highlight from all drag hover targets."""
+        # Clear single hover item
+        if self._drag_hover_item is not None:
+            widget = self.template_list.itemWidget(self._drag_hover_item)
+            if widget:
+                widget.setStyleSheet("")
+            self._drag_hover_item = None
+        
+        # Clear multiple hover items (for "remove from folder" hint)
+        if hasattr(self, '_drag_hover_items') and self._drag_hover_items:
+            for item in self._drag_hover_items:
+                widget = self.template_list.itemWidget(item)
+                if widget:
+                    widget.setStyleSheet("")
+            self._drag_hover_items = []
 
     def _on_current_item_changed(self, current, previous):
         if self._refreshing or current is None:
             return
+        if self._editing_new:
+            return
         if self._mouse_click_in_progress or self._pending_click_name or self._click_timer.isActive():
             return
+        
+        item_type = current.data(ROLE_ITEM_TYPE)
+        if item_type != "template":
+            return
+            
+        path = current.data(ROLE_ITEM_PATH)
         widget = self.template_list.itemWidget(current)
         if isinstance(widget, TemplateListItem):
-            name = widget.get_name()
-            if name and widget._allow_delete and not widget._editable and name != self._current_template:
-                self.template_selected.emit(name)
+            if path and path != "untitled project" and not widget._editable and path != self._current_template:
+                self.template_selected.emit(path)
 
     def _clear_mouse_click_flag(self):
         self._mouse_click_in_progress = False
@@ -326,6 +838,10 @@ class ProjectTemplatesPanel(QFrame):
         if self._click_timer.isActive():
             self._click_timer.stop()
         if self._pending_click_name:
+            if self._editing_new:
+                self._pending_click_name = None
+                self._mouse_click_in_progress = False
+                return
             self.template_selected.emit(self._pending_click_name)
             self._pending_click_name = None
         self._mouse_click_in_progress = False
@@ -334,31 +850,95 @@ class ProjectTemplatesPanel(QFrame):
         item = self.template_list.itemAt(pos)
         if item is None:
             return
+        
+        item_type = item.data(ROLE_ITEM_TYPE)
+        item_path = item.data(ROLE_ITEM_PATH)
         widget = self.template_list.itemWidget(item)
+        
+        if item_type == "folder":
+            if not isinstance(widget, FolderListItem) or widget._editable:
+                return
+            self.template_list.setCurrentItem(item)
+            menu = QMenu(self)
+            new_template_action = menu.addAction("New Template")
+            menu.addSeparator()
+            rename_action = menu.addAction("Rename")
+            show_action = menu.addAction("Show in Finder")
+            menu.addSeparator()
+            delete_action = menu.addAction("Delete")
+            action = menu.exec(self.template_list.viewport().mapToGlobal(pos))
+            if action == new_template_action:
+                self._create_new_template(folder=item_path)
+            elif action == rename_action:
+                self._start_rename_folder(item_path)
+            elif action == show_action:
+                folder_path = library.get_project_templates_dir() / item_path
+                if folder_path.exists():
+                    if sys.platform == "darwin":
+                        subprocess.run(["open", "-R", str(folder_path)])
+                    else:
+                        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder_path)))
+            elif action == delete_action:
+                self._delete_folder(item_path)
+            return
+            
+        if item_type != "template":
+            return
         if not isinstance(widget, TemplateListItem) or widget._editable:
             return
-        name = widget.get_name()
-        if not name:
+        if not item_path:
             return
-        content = library.load_project_template(name)
+        content = library.load_project_template(item_path)
         if content is None:
             return
         self.template_list.setCurrentItem(item)
         menu = QMenu(self)
         rename_action = menu.addAction("Rename")
         duplicate_action = menu.addAction("Duplicate")
+        
+        # Add move options
+        folder = self._get_template_folder(item_path)
+        folders = library.list_project_template_folders()
+        if folder or folders:
+            move_menu = menu.addMenu("Move to")
+            if folder:
+                move_root_action = move_menu.addAction("Root")
+            else:
+                move_root_action = None
+            for f in folders:
+                if f != folder:
+                    move_menu.addAction(f)
+        else:
+            move_menu = None
+            move_root_action = None
+        
         show_action = menu.addAction("Show in Finder")
         menu.addSeparator()
         delete_action = menu.addAction("Delete")
         action = menu.exec(self.template_list.viewport().mapToGlobal(pos))
         if action == rename_action:
-            self._start_rename_template(name)
+            self._start_rename_template(item_path)
         elif action == duplicate_action:
-            self._duplicate_template(name)
+            self._duplicate_template(item_path)
         elif action == show_action:
-            self.show_in_finder_requested.emit(name)
+            self.show_in_finder_requested.emit(item_path)
         elif action == delete_action:
-            self._delete_template(name)
+            self._delete_template(item_path)
+        elif move_menu and action:
+            if action == move_root_action:
+                new_name = library.move_project_template_out_of_folder(item_path)
+                if new_name:
+                    if self._current_template == item_path:
+                        self._current_template = new_name
+                        self.template_renamed.emit(item_path, new_name)
+                    self.refresh_list()
+            elif action.text() in folders:
+                new_name = library.move_project_template_to_folder(item_path, action.text())
+                if new_name:
+                    if self._current_template == item_path:
+                        self._current_template = new_name
+                        self.template_renamed.emit(item_path, new_name)
+                    self.refresh_list()
 
     def _start_rename_template(self, name: str):
         self._click_timer.stop()
@@ -376,13 +956,17 @@ class ProjectTemplatesPanel(QFrame):
         self.template_selected.emit(new_name)
 
     def _on_item_clicked(self, item: QListWidgetItem):
+        item_type = item.data(ROLE_ITEM_TYPE)
+        item_path = item.data(ROLE_ITEM_PATH)
         widget = self.template_list.itemWidget(item)
-        if isinstance(widget, TemplateListItem):
-            name = widget.get_name()
-            if name and widget._allow_delete and not widget._editable:
-                if name == self._current_template:
+        
+        if item_type == "template" and isinstance(widget, TemplateListItem):
+            if item_path and item_path != "untitled project" and not widget._editable:
+                if self._editing_new:
                     return
-                self._pending_click_name = name
+                if item_path == self._current_template:
+                    return
+                self._pending_click_name = item_path
                 if self._click_timer.receivers(self._click_timer.timeout) > 0:
                     self._click_timer.timeout.disconnect()
                 self._click_timer.timeout.connect(self._process_single_click)
@@ -390,6 +974,9 @@ class ProjectTemplatesPanel(QFrame):
 
     def _process_single_click(self):
         if self._pending_click_name:
+            if self._editing_new:
+                self._pending_click_name = None
+                return
             self.template_selected.emit(self._pending_click_name)
         self._pending_click_name = None
 
@@ -397,46 +984,66 @@ class ProjectTemplatesPanel(QFrame):
         self._click_timer.stop()
         self._pending_click_name = None
 
+        item_type = item.data(ROLE_ITEM_TYPE)
+        item_path = item.data(ROLE_ITEM_PATH)
         widget = self.template_list.itemWidget(item)
-        if isinstance(widget, TemplateListItem) and not widget._editable:
-            name = widget.get_name()
-            if name:
-                if widget._allow_delete:
-                    self._renaming_template = name
+        
+        if item_type == "folder" and isinstance(widget, FolderListItem) and not widget._editable:
+            if item_path:
+                self._start_rename_folder(item_path)
+        elif item_type == "template" and isinstance(widget, TemplateListItem) and not widget._editable:
+            if item_path:
+                if item_path == "untitled project" and self._current_template is None and self._has_unsaved_changes:
+                    self._start_draft_naming(item_path)
+                else:
+                    self._renaming_template = item_path
                     self.refresh_list()
-                elif self._current_template is None and self._has_unsaved_changes:
-                    self._start_draft_naming(name)
 
-    def _create_new_template(self):
+    def _create_new_template(self, folder: str = None):
         """Start creating a new template with inline name editing."""
         self._current_template = None
         self._has_unsaved_changes = False
         self._original_content = ""
         self._editing_new = True
+        self._new_template_folder = folder
         self._renaming_template = None
         self._draft_name_seed = ""
+        # Expand the folder if creating inside one
+        if folder:
+            self._folder_expanded[folder] = True
         self.new_template_requested.emit()
         self.refresh_list()
 
     def _on_new_name_confirmed(self, old_name: str, new_name: str):
+        if self._refreshing:
+            return
         """Finalize a new template name entry."""
         self._draft_name_seed = ""
         name = new_name.strip()
+        
+        # Prepend folder path if creating in a folder
+        if self._new_template_folder:
+            name = f"{self._new_template_folder}/{name}"
+        
         if name == "untitled project":
             name = self.get_unique_template_name(name)
         elif name in library.list_project_templates():
             decision = self._prompt_template_name_conflict(name)
             if decision == "cancel":
                 self._editing_new = False
+                self._new_template_folder = None
                 self.refresh_list()
                 return
             if decision == "keep":
                 name = self._next_available_template_name(name)
         self._editing_new = False
+        self._new_template_folder = None
         self._current_template = name
         self.save_requested.emit()
 
     def _on_new_name_canceled(self, old_name: str):
+        if self._refreshing:
+            return
         if self._editing_new and not self._draft_name_seed:
             pending_name = self.get_template_name().strip()
             if not pending_name:
@@ -445,6 +1052,7 @@ class ProjectTemplatesPanel(QFrame):
                 return
         self._draft_name_seed = ""
         self._editing_new = False
+        self._new_template_folder = None
         self.refresh_list()
 
     def _start_draft_naming(self, name: str):
@@ -454,27 +1062,49 @@ class ProjectTemplatesPanel(QFrame):
         self._draft_name_seed = name
         self.refresh_list()
 
+    def _capture_new_template_name(self):
+        name = ""
+        for i in range(self.template_list.count()):
+            widget = self.template_list.itemWidget(self.template_list.item(i))
+            if isinstance(widget, TemplateListItem) and widget._editable:
+                name = widget.get_name()
+                break
+        if name:
+            self._draft_name_seed = name
+
     def _on_rename_confirmed(self, old_name: str, new_name: str):
         self._renaming_template = None
-        name = new_name.strip()
-        if not name or old_name == name:
+        new_basename = new_name.strip()
+        if not new_basename:
+            self.refresh_list()
+            return
+        
+        # Preserve folder path when renaming
+        old_folder = self._get_template_folder(old_name)
+        if old_folder:
+            full_new_name = f"{old_folder}/{new_basename}"
+        else:
+            full_new_name = new_basename
+        
+        old_display = self._get_template_display_name(old_name)
+        if old_display == new_basename:
             self.refresh_list()
             return
 
         old_path = library.get_project_template_path(old_name)
         if old_path.exists():
-            if library.rename_project_template(old_name, name):
+            if library.rename_project_template(old_name, full_new_name):
                 if self._current_template == old_name:
-                    self._current_template = name
+                    self._current_template = full_new_name
                 if old_name in self._draft_store:
-                    self._draft_store[name] = self._draft_store.pop(old_name)
-                self.template_renamed.emit(old_name, name)
+                    self._draft_store[full_new_name] = self._draft_store.pop(old_name)
+                self.template_renamed.emit(old_name, full_new_name)
             self.refresh_list()
             return
 
         if old_name in self._draft_store:
-            self._draft_store[name] = self._draft_store.pop(old_name)
-        self._current_template = name
+            self._draft_store[full_new_name] = self._draft_store.pop(old_name)
+        self._current_template = full_new_name
         self._has_unsaved_changes = True
         self.save_requested.emit()
         self.refresh_list()
@@ -521,12 +1151,21 @@ class ProjectTemplatesPanel(QFrame):
         return "overwrite"
 
     def _delete_template(self, name: str):
-        """Delete a template with slide animation."""
+        """Delete a template with confirmation dialog and slide animation."""
+        # Show confirmation dialog
+        display_name = self._get_template_display_name(name)
+        dialog = DeleteConfirmationDialog(display_name, self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        if dialog.choice != DeleteConfirmationDialog.Choice.DELETE:
+            return
+
         prev_name = self.get_previous_template_name(name)
         for i in range(self.template_list.count()):
             item = self.template_list.item(i)
+            item_path = item.data(ROLE_ITEM_PATH)
             widget = self.template_list.itemWidget(item)
-            if isinstance(widget, TemplateListItem) and widget.get_name() == name:
+            if isinstance(widget, TemplateListItem) and item_path == name:
                 start_pos = widget.pos()
                 end_pos = QPoint(-widget.width(), start_pos.y())
 
@@ -536,15 +1175,15 @@ class ProjectTemplatesPanel(QFrame):
                 animation.setEndValue(end_pos)
                 animation.setEasingCurve(QEasingCurve.Type.InQuad)
 
-                def on_finished():
-                    self.template_delete_requested.emit(name)
-                    library.delete_project_template(name)
-                    if name == self._current_template:
+                def on_finished(template_name=name, prev=prev_name):
+                    self.template_delete_requested.emit(template_name)
+                    library.delete_project_template(template_name)
+                    if template_name == self._current_template:
                         self._current_template = None
                         self._has_unsaved_changes = False
                         self._original_content = ""
-                        if prev_name:
-                            self.template_selected.emit(prev_name)
+                        if prev:
+                            self.template_selected.emit(prev)
                         else:
                             self.clear_requested.emit()
                     self.refresh_list()
@@ -784,6 +1423,7 @@ class DetailsPanel(QFrame):
                     "default": default_value,
                 }
             self._rebuild_custom_fields_layout(new_order)
+            self._apply_tab_order()
             return
         new_order = [spec[0] for spec in specs]
         new_keys = set(new_order)
@@ -827,6 +1467,7 @@ class DetailsPanel(QFrame):
                 self._animate_field_appearance(container)
 
         self._rebuild_custom_fields_layout(new_order + removed_keys)
+        self._apply_tab_order()
 
     def get_custom_field_values(self, apply_defaults: bool = False) -> dict[str, str]:
         values = {}
@@ -834,7 +1475,7 @@ class DetailsPanel(QFrame):
             if field.get("removing"):
                 continue
             text = field["widget"].text()
-            if apply_defaults and not text and field.get("default"):
+            if apply_defaults and not text.strip() and field.get("default"):
                 values[field["token"]] = field["default"]
             else:
                 values[field["token"]] = text
@@ -856,6 +1497,35 @@ class DetailsPanel(QFrame):
             if field.get("removing"):
                 continue
             field["widget"].clear()
+
+    def _ordered_field_widgets(self):
+        widgets = []
+        for token_key, *_ in self._custom_field_specs:
+            field = self._custom_fields.get(token_key)
+            if not field or field.get("removing"):
+                continue
+            widgets.append(field["widget"])
+        return widgets
+
+    def _next_focus_outside_details(self):
+        widget = self.title_input
+        seen = set()
+        while widget and widget not in seen:
+            seen.add(widget)
+            widget = widget.nextInFocusChain()
+            if widget and not self.isAncestorOf(widget) and widget is not self:
+                return widget
+        return None
+
+    def _apply_tab_order(self):
+        widgets = [self.title_input] + self._ordered_field_widgets()
+        if not widgets:
+            return
+        for first, second in zip(widgets, widgets[1:]):
+            QWidget.setTabOrder(first, second)
+        next_widget = self._next_focus_outside_details()
+        if next_widget and widgets[-1] is not next_widget:
+            QWidget.setTabOrder(widgets[-1], next_widget)
 
     def _create_field_widgets(self, label: str, placeholder: str):
         container = QWidget()
@@ -930,6 +1600,8 @@ class DetailsPanel(QFrame):
 class PreviewPanel(QFrame):
     """Right middle panel: file tree preview and content viewer."""
 
+    generate_item_requested = pyqtSignal(str)  # Emits path of item to generate
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("previewPanel")
@@ -965,6 +1637,8 @@ class PreviewPanel(QFrame):
         self.tree.setRootIsDecorated(True)
         self.tree.setAnimated(True)
         self.tree.installEventFilter(self)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._show_context_menu)
         self._last_nav_direction = None
 
         self._dark_mode = True
@@ -1181,6 +1855,20 @@ class PreviewPanel(QFrame):
                         self._update_content_for_item(parent)
                         return True
 
+            elif current and key == Qt.Key.Key_Left:
+                # Collapse folder when pressing left arrow
+                is_folder = current.data(0, Qt.ItemDataRole.UserRole + 1)
+                if is_folder and current.isExpanded():
+                    current.setExpanded(False)
+                    return True
+
+            elif current and key == Qt.Key.Key_Right:
+                # Expand folder when pressing right arrow
+                is_folder = current.data(0, Qt.ItemDataRole.UserRole + 1)
+                if is_folder and not current.isExpanded():
+                    current.setExpanded(True)
+                    return True
+
         return super().eventFilter(obj, event)
 
     def _get_previous_visible_item(self, item):
@@ -1210,6 +1898,31 @@ class PreviewPanel(QFrame):
             self.content_view.setPlaceholderText("Empty file.")
         else:
             self.content_view.setPlainText(content)
+
+    def _show_context_menu(self, pos):
+        """Show context menu for tree items."""
+        item = self.tree.itemAt(pos)
+        if item is None:
+            return
+
+        is_placeholder = item.data(0, Qt.ItemDataRole.UserRole + 2)
+        if is_placeholder:
+            return
+
+        path = item.data(0, Qt.ItemDataRole.UserRole)
+        is_folder = item.data(0, Qt.ItemDataRole.UserRole + 1)
+
+        menu = QMenu(self)
+
+        if is_folder:
+            generate_action = menu.addAction("Generate this folder")
+        else:
+            generate_action = menu.addAction("Generate this file")
+
+        action = menu.exec(self.tree.mapToGlobal(pos))
+
+        if action == generate_action:
+            self.generate_item_requested.emit(path)
 
     def _on_item_clicked(self, item: QTreeWidgetItem):
         if item is None:
@@ -1258,7 +1971,7 @@ class PreviewPanel(QFrame):
 
 
 class FileTemplatesPanel(QFrame):
-    """Bottom center panel: file templates list and editor."""
+    """Bottom center panel: file templates list and editor with folder support."""
 
     insert_reference = pyqtSignal(str)
     template_delete_requested = pyqtSignal(str)
@@ -1274,7 +1987,9 @@ class FileTemplatesPanel(QFrame):
         self._original_content = ""
         self._drafts = {}
         self._editing_new = False
+        self._new_template_folder = None  # Folder to create new template in
         self._renaming_template = None
+        self._renaming_folder = None
         self._refreshing = False
         self._refresh_pending = False
         self._click_timer = QTimer()
@@ -1285,6 +2000,14 @@ class FileTemplatesPanel(QFrame):
         self._mouse_clear_timer = QTimer()
         self._mouse_clear_timer.setSingleShot(True)
         self._mouse_clear_timer.timeout.connect(self._clear_mouse_click_flag)
+        
+        # Folder expansion states
+        self._folder_expanded = {}
+        
+        # Drag and drop state
+        self._drag_start_pos = None
+        self._drag_source_name = None
+        self._drag_hover_item = None  # Currently highlighted drop target
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(12, 12, 12, 12)
@@ -1305,6 +2028,8 @@ class FileTemplatesPanel(QFrame):
 
         self.template_list = QListWidget()
         self.template_list.setMinimumWidth(140)
+        self.template_list.setSpacing(0)
+        self.template_list.setViewportMargins(0, 0, 0, 0)
         self.template_list.itemClicked.connect(self._on_item_clicked)
         self.template_list.itemDoubleClicked.connect(self._on_item_double_clicked)
         self.template_list.currentItemChanged.connect(self._on_current_item_changed)
@@ -1312,6 +2037,14 @@ class FileTemplatesPanel(QFrame):
         self.template_list.viewport().installEventFilter(self)
         self.template_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.template_list.customContextMenuRequested.connect(self._show_context_menu)
+        
+        # Enable drag and drop (use DragDrop mode, not InternalMove, to prevent Qt's auto-reordering)
+        self.template_list.setDragEnabled(True)
+        self.template_list.setAcceptDrops(True)
+        self.template_list.setDragDropMode(QListWidget.DragDropMode.DragDrop)
+        self.template_list.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.template_list.viewport().setAcceptDrops(True)
+        
         left_layout.addWidget(self.template_list, 1)
 
         splitter.addWidget(left_widget)
@@ -1352,63 +2085,123 @@ class FileTemplatesPanel(QFrame):
         self.editor.horizontalScrollBar().setValue(0)
         self.editor.verticalScrollBar().setValue(0)
 
+    def _get_folder_display_name(self, folder: str) -> str:
+        """Get display name for a folder (last component of path)."""
+        return Path(folder).name
+
+    def _get_template_display_name(self, name: str) -> str:
+        """Get display name for a template (last component without folder)."""
+        return Path(name).name
+
+    def _get_template_folder(self, name: str) -> str | None:
+        """Get the folder a template is in, or None if at root."""
+        path = Path(name)
+        if len(path.parts) > 1:
+            return path.parts[0]
+        return None
+
     def refresh_list(self):
-        """Refresh the template list from disk."""
+        """Refresh the template list from disk with folder support."""
         if self._refreshing:
             self._refresh_pending = True
             return
         self._refreshing = True
         self.template_list.clear()
+        
         template_names = library.list_file_template_names()
+        folders = library.list_file_template_folders()
         unsaved_names = set(self._drafts.keys())
         if self._has_unsaved_changes and self._current_template:
             unsaved_names.add(self._current_template)
 
-        for name in template_names:
-            if name == self._renaming_template:
+        # Track which templates are in folders
+        templates_in_folders = set()
+        for folder in folders:
+            for t in template_names:
+                if t.startswith(f"{folder}/"):
+                    templates_in_folders.add(t)
+
+        # Add folders first
+        for folder in folders:
+            if folder == self._renaming_folder:
                 item = QListWidgetItem()
-                widget = TemplateListItem(
-                    name,
+                widget = FolderListItem(
+                    folder,
                     editable=True,
-                    placeholder="filename.ext",
-                    delete_square=True,
+                    placeholder="Folder name...",
+                    expanded=self._folder_expanded.get(folder, True),
                 )
-                widget.name_edited.connect(self._on_rename_confirmed)
-                widget.name_canceled.connect(self._on_rename_canceled)
-                widget.name_edit.setText(name)
+                widget.name_edited.connect(self._on_folder_rename_confirmed)
+                widget.name_canceled.connect(self._on_folder_rename_canceled)
+                widget.name_edit.setText(folder)
+                item.setData(ROLE_ITEM_TYPE, "folder")
+                item.setData(ROLE_ITEM_PATH, folder)
                 item.setSizeHint(widget.sizeHint())
                 self.template_list.addItem(item)
                 self.template_list.setItemWidget(item, widget)
-                self.template_list.setCurrentItem(item)
                 QTimer.singleShot(50, widget.focus_edit)
             else:
+                expanded = self._folder_expanded.get(folder, True)
                 item = QListWidgetItem()
-                widget = TemplateListItem(
-                    name,
-                    delete_square=True,
-                    delete_tooltip="Delete template",
+                widget = FolderListItem(
+                    folder,
+                    expanded=expanded,
                 )
-                widget.rename_requested.connect(self._start_rename_template)
-                widget.delete_clicked.connect(self._delete_template)
-                if name in unsaved_names:
-                    widget.set_unsaved(True)
+                widget.rename_requested.connect(self._start_rename_folder)
+                widget.delete_clicked.connect(self._delete_folder)
+                widget.toggled.connect(self._on_folder_toggled)
+                item.setData(ROLE_ITEM_TYPE, "folder")
+                item.setData(ROLE_ITEM_PATH, folder)
                 item.setSizeHint(widget.sizeHint())
                 self.template_list.addItem(item)
                 self.template_list.setItemWidget(item, widget)
 
-                if name == self._current_template:
+            # Add templates inside folder if expanded
+            if self._folder_expanded.get(folder, True):
+                folder_templates = [t for t in template_names if t.startswith(f"{folder}/")]
+                for name in folder_templates:
+                    self._add_template_item(name, unsaved_names, indent=True)
+                
+                # Add new template input inside this folder if creating here
+                if self._editing_new and self._new_template_folder == folder:
+                    item = QListWidgetItem()
+                    widget = TemplateListItem(
+                        "",
+                        editable=True,
+                        placeholder="filename.ext",
+                    )
+                    widget.name_edited.connect(self._on_new_name_confirmed)
+                    widget.name_canceled.connect(self._on_new_name_canceled)
+                    item.setData(ROLE_ITEM_TYPE, "template")
+                    item.setData(ROLE_ITEM_PATH, "")
+                    item.setSizeHint(widget.sizeHint())
+                    # Add indentation for folder context
+                    layout = widget.layout()
+                    if layout:
+                        margins = layout.contentsMargins()
+                        layout.setContentsMargins(margins.left() + 20, margins.top(), margins.right(), margins.bottom())
+                    self.template_list.addItem(item)
+                    self.template_list.setItemWidget(item, widget)
                     self.template_list.setCurrentItem(item)
+                    QTimer.singleShot(50, widget.focus_edit)
 
-        if self._editing_new:
+        # Add templates at root level (not in any folder)
+        for name in template_names:
+            if name not in templates_in_folders:
+                self._add_template_item(name, unsaved_names, indent=False)
+
+        # Handle editing new template (only at root level)
+        if self._editing_new and not self._new_template_folder:
             item = QListWidgetItem()
             widget = TemplateListItem(
                 "",
                 editable=True,
                 placeholder="filename.ext",
-                delete_square=True,
             )
             widget.name_edited.connect(self._on_new_name_confirmed)
             widget.name_canceled.connect(self._on_new_name_canceled)
+            item.setData(ROLE_ITEM_TYPE, "template")
+            item.setData(ROLE_ITEM_PATH, "")
             item.setSizeHint(widget.sizeHint())
             self.template_list.addItem(item)
             self.template_list.setItemWidget(item, widget)
@@ -1418,6 +2211,8 @@ class FileTemplatesPanel(QFrame):
         add_item = QListWidgetItem()
         add_widget = AddTemplateButton()
         add_widget.clicked.connect(self._create_new_template)
+        add_widget.folder_clicked.connect(self._create_new_folder)
+        add_item.setData(ROLE_ITEM_TYPE, "add_button")
         add_item.setSizeHint(QSize(0, add_widget.sizeHint().height()))
         add_item.setFlags(
             add_item.flags()
@@ -1431,6 +2226,141 @@ class FileTemplatesPanel(QFrame):
         if self._refresh_pending:
             self._refresh_pending = False
             QTimer.singleShot(0, self.refresh_list)
+
+    def _create_new_folder(self):
+        """Create a new folder and show rename input."""
+        folder_name = self._generate_unique_folder_name("New Folder")
+        library.create_file_template_folder(folder_name)
+        self._folder_expanded[folder_name] = True
+        self._renaming_folder = folder_name
+        self.refresh_list()
+        self._select_item_by_path(folder_name)
+        self.template_list.setFocus()
+
+    def _add_template_item(self, name: str, unsaved_names: set, indent: bool = False):
+        """Add a template item to the list."""
+        display_name = self._get_template_display_name(name)
+        
+        if name == self._renaming_template:
+            item = QListWidgetItem()
+            widget = TemplateListItem(
+                display_name,
+                editable=True,
+                placeholder="filename.ext",
+            )
+            widget.name_edited.connect(
+                lambda old, new, n=name: self._on_rename_confirmed(n, new)
+            )
+            widget.name_canceled.connect(lambda old: self._on_rename_canceled(name))
+            widget.name_edit.setText(display_name)
+            if indent:
+                layout = widget.layout()
+                if layout:
+                    margins = layout.contentsMargins()
+                    layout.setContentsMargins(20, margins.top(), margins.right(), margins.bottom())
+            item.setData(ROLE_ITEM_TYPE, "template")
+            item.setData(ROLE_ITEM_PATH, name)
+            item.setSizeHint(widget.sizeHint())
+            self.template_list.addItem(item)
+            self.template_list.setItemWidget(item, widget)
+            self.template_list.setCurrentItem(item)
+            QTimer.singleShot(50, widget.focus_edit)
+        else:
+            item = QListWidgetItem()
+            widget = TemplateListItem(
+                display_name,
+            )
+            widget.rename_requested.connect(lambda n=name: self._start_rename_template(n))
+            widget.delete_clicked.connect(lambda n=name: self._delete_template(n))
+            if name in unsaved_names:
+                widget.set_unsaved(True)
+            if indent:
+                layout = widget.layout()
+                if layout:
+                    margins = layout.contentsMargins()
+                    layout.setContentsMargins(20, margins.top(), margins.right(), margins.bottom())
+            item.setData(ROLE_ITEM_TYPE, "template")
+            item.setData(ROLE_ITEM_PATH, name)
+            item.setSizeHint(widget.sizeHint())
+            self.template_list.addItem(item)
+            self.template_list.setItemWidget(item, widget)
+
+            if name == self._current_template:
+                self.template_list.setCurrentItem(item)
+
+    def _on_folder_toggled(self, folder: str, expanded: bool):
+        """Handle folder expand/collapse."""
+        self._folder_expanded[folder] = expanded
+        self.refresh_list()
+        self._select_item_by_path(folder)
+
+    def _select_item_by_path(self, path: str):
+        """Select an item in the list by its path."""
+        for i in range(self.template_list.count()):
+            item = self.template_list.item(i)
+            if item and item.data(ROLE_ITEM_PATH) == path:
+                self.template_list.setCurrentItem(item)
+                return
+
+    def _start_rename_folder(self, folder: str):
+        """Start renaming a folder."""
+        self._renaming_folder = folder
+        self.refresh_list()
+
+    def _on_folder_rename_confirmed(self, old_name: str, new_name: str):
+        """Handle folder rename confirmation."""
+        self._renaming_folder = None
+        if old_name != new_name and new_name:
+            if library.rename_file_template_folder(old_name, new_name):
+                # Update expansion state
+                if old_name in self._folder_expanded:
+                    self._folder_expanded[new_name] = self._folder_expanded.pop(old_name)
+                # Update current template path if it was in this folder
+                if self._current_template and self._current_template.startswith(f"{old_name}/"):
+                    new_template = new_name + self._current_template[len(old_name):]
+                    self._current_template = new_template
+                    self.reference_label.setText(f"Reference: template: {self._current_template}")
+        self.refresh_list()
+
+    def _on_folder_rename_canceled(self, old_name: str):
+        """Handle folder rename cancellation."""
+        self._renaming_folder = None
+        self.refresh_list()
+
+    def _delete_folder(self, folder: str):
+        """Delete a folder and all its contents."""
+        templates_in_folder = library.get_file_templates_in_folder(folder)
+        dialog = DeleteFolderConfirmationDialog(
+            folder, len(templates_in_folder), parent=self
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        
+        library.delete_file_template_folder(folder)
+        self._folder_expanded.pop(folder, None)
+        
+        # Clear current template if it was in the deleted folder
+        if self._current_template and self._current_template.startswith(f"{folder}/"):
+            self._current_template = None
+            self._has_unsaved_changes = False
+            self._original_content = ""
+            self.editor.clear()
+            self.reference_label.setText("Reference: template: <name>")
+        
+        self.refresh_list()
+        self.templates_changed.emit()
+
+    def _generate_unique_folder_name(self, base_name: str) -> str:
+        """Generate a unique folder name."""
+        existing = set(library.list_file_template_folders())
+        if base_name not in existing:
+            return base_name
+        index = 1
+        while True:
+            candidate = f"{base_name} ({index})"
+            if candidate not in existing:
+                return candidate
+            index += 1
 
     def has_unsaved_changes(self) -> bool:
         return self._has_unsaved_changes or bool(self._drafts)
@@ -1446,14 +2376,63 @@ class FileTemplatesPanel(QFrame):
             self._drafts.pop(self._current_template, None)
 
     def eventFilter(self, obj, event):
-        from PyQt6.QtCore import QEvent
+        from PyQt6.QtCore import QEvent, QMimeData
+        from PyQt6.QtGui import QDrag
+        
         if obj in (self.template_list, self.template_list.viewport()):
             if event.type() == QEvent.Type.MouseButtonPress:
                 self._mouse_click_in_progress = True
-            elif event.type() in (QEvent.Type.MouseButtonRelease, QEvent.Type.MouseButtonDblClick):
+                if event.button() == Qt.MouseButton.LeftButton:
+                    self._drag_start_pos = event.position().toPoint()
+                    item = self.template_list.itemAt(self._drag_start_pos)
+                    if item:
+                        item_type = item.data(ROLE_ITEM_TYPE)
+                        if item_type == "template":
+                            self._drag_source_name = item.data(ROLE_ITEM_PATH)
+                        else:
+                            self._drag_source_name = None
+                    else:
+                        self._drag_source_name = None
+                        
+            elif event.type() == QEvent.Type.MouseMove:
+                if (self._drag_start_pos is not None 
+                    and self._drag_source_name is not None
+                    and event.buttons() & Qt.MouseButton.LeftButton):
+                    distance = (event.position().toPoint() - self._drag_start_pos).manhattanLength()
+                    if distance >= 10:  # Drag threshold
+                        self._start_drag()
+                        return True
+                        
+            elif event.type() == QEvent.Type.MouseButtonRelease:
+                self._drag_start_pos = None
+                self._drag_source_name = None
                 self._mouse_clear_timer.start(0)
+                
+            elif event.type() == QEvent.Type.DragEnter:
+                if event.mimeData().hasFormat("application/x-makeproject-filetemplate"):
+                    event.acceptProposedAction()
+                    return True
+                    
+            elif event.type() == QEvent.Type.DragMove:
+                if event.mimeData().hasFormat("application/x-makeproject-filetemplate"):
+                    drop_pos = event.position().toPoint()
+                    target_item = self.template_list.itemAt(drop_pos)
+                    self._update_drag_hover(target_item)
+                    event.acceptProposedAction()
+                    return True
+                    
+            elif event.type() == QEvent.Type.Drop:
+                if event.mimeData().hasFormat("application/x-makeproject-filetemplate"):
+                    self._clear_drag_hover()
+                    self._handle_drop(event)
+                    return True
+                    
+            elif event.type() == QEvent.Type.DragLeave:
+                self._clear_drag_hover()
+                    
             elif event.type() == QEvent.Type.FocusOut:
                 self._finalize_pending_click()
+                
             elif event.type() == QEvent.Type.KeyPress:
                 if self._pending_click_name or self._click_timer.isActive():
                     self._finalize_pending_click()
@@ -1463,28 +2442,260 @@ class FileTemplatesPanel(QFrame):
                     current_row = self.template_list.currentRow()
                     if current_row >= self.template_list.count() - 2:
                         return True
+                elif key == Qt.Key.Key_Left:
+                    # Collapse folder when pressing left arrow
+                    current = self.template_list.currentItem()
+                    if current:
+                        item_type = current.data(ROLE_ITEM_TYPE)
+                        if item_type == "folder":
+                            folder = current.data(ROLE_ITEM_PATH)
+                            if folder and self._folder_expanded.get(folder, True):
+                                self._folder_expanded[folder] = False
+                                self.refresh_list()
+                                self._select_item_by_path(folder)
+                                return True
+                elif key == Qt.Key.Key_Right:
+                    # Expand folder when pressing right arrow
+                    current = self.template_list.currentItem()
+                    if current:
+                        item_type = current.data(ROLE_ITEM_TYPE)
+                        if item_type == "folder":
+                            folder = current.data(ROLE_ITEM_PATH)
+                            if folder and not self._folder_expanded.get(folder, True):
+                                self._folder_expanded[folder] = True
+                                self.refresh_list()
+                                self._select_item_by_path(folder)
+                                return True
                 elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                     current = self.template_list.currentItem()
                     if current:
+                        item_type = current.data(ROLE_ITEM_TYPE)
                         widget = self.template_list.itemWidget(current)
-                        if isinstance(widget, TemplateListItem) and not widget._editable:
-                            name = widget.get_name()
-                            if name:
-                                self._renaming_template = name
+                        if item_type == "template" and isinstance(widget, TemplateListItem) and not widget._editable:
+                            path = current.data(ROLE_ITEM_PATH)
+                            if path:
+                                self._renaming_template = path
                                 self.refresh_list()
                                 return True
+                        elif item_type == "folder" and isinstance(widget, FolderListItem) and not widget._editable:
+                            folder = current.data(ROLE_ITEM_PATH)
+                            if folder:
+                                self._start_rename_folder(folder)
+                                return True
         return super().eventFilter(obj, event)
+
+    def _start_drag(self):
+        """Initiate a drag operation for a file template."""
+        from PyQt6.QtCore import QMimeData
+        from PyQt6.QtGui import QDrag, QPixmap, QPainter
+        
+        if not self._drag_source_name:
+            return
+            
+        drag = QDrag(self.template_list)
+        mime_data = QMimeData()
+        mime_data.setData("application/x-makeproject-filetemplate", self._drag_source_name.encode())
+        drag.setMimeData(mime_data)
+        
+        # Create visual drag feedback
+        display_name = self._get_template_display_name(self._drag_source_name)
+        font = self.template_list.font()
+        metrics = self.template_list.fontMetrics()
+        text_width = metrics.horizontalAdvance(display_name) + 24
+        text_height = metrics.height() + 12
+        
+        pixmap = QPixmap(text_width, text_height)
+        pixmap.fill(QColor(26, 188, 157, 200))  # Teal with transparency
+        
+        painter = QPainter(pixmap)
+        painter.setFont(font)
+        painter.setPen(QColor(255, 255, 255))
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, display_name)
+        painter.end()
+        
+        drag.setPixmap(pixmap)
+        drag.setHotSpot(QPoint(text_width // 2, text_height // 2))
+        
+        # Execute drag
+        drag.exec(Qt.DropAction.MoveAction)
+        
+        self._drag_start_pos = None
+        self._drag_source_name = None
+
+    def _handle_drop(self, event):
+        """Handle a drop event for folder creation or moving."""
+        source_name = event.mimeData().data("application/x-makeproject-filetemplate").data().decode()
+        drop_pos = event.position().toPoint()
+        target_item = self.template_list.itemAt(drop_pos)
+        
+        if target_item is None:
+            # Refresh to reset any Qt-internal reordering
+            self.refresh_list()
+            return
+            
+        target_type = target_item.data(ROLE_ITEM_TYPE)
+        target_path = target_item.data(ROLE_ITEM_PATH)
+        
+        # Ignore drops on add_button - it should have no effect
+        if target_type == "add_button":
+            self.refresh_list()
+            return
+        
+        if target_type == "folder":
+            # Drop onto folder - move template into folder
+            source_folder = self._get_template_folder(source_name)
+            if source_folder == target_path:
+                # Already in this folder
+                self.refresh_list()
+                return
+            new_name = library.move_file_template_to_folder(source_name, target_path)
+            if new_name:
+                if self._current_template == source_name:
+                    self._current_template = new_name
+                    self.reference_label.setText(f"Reference: template: {self._current_template}")
+                self.templates_changed.emit()
+            self.refresh_list()
+                
+        elif target_type == "template":
+            # Drop onto template - create new folder containing both OR move out of folder
+            if source_name == target_path:
+                self.refresh_list()
+                return
+            source_folder = self._get_template_folder(source_name)
+            target_folder = self._get_template_folder(target_path)
+            
+            # If both templates are in the same folder (or both at root), create a new subfolder
+            if source_folder == target_folder:
+                # First, create folder with temporary name and move templates
+                temp_folder = self._generate_unique_folder_name("New Folder")
+                library.create_file_template_folder(temp_folder)
+                self._folder_expanded[temp_folder] = True
+                
+                # Move both templates into the folder
+                for template_name in [source_name, target_path]:
+                    new_path = library.move_file_template_to_folder(template_name, temp_folder)
+                    if new_path and self._current_template == template_name:
+                        self._current_template = new_path
+                        self.reference_label.setText(f"Reference: template: {self._current_template}")
+                
+                # Now show rename input for the folder
+                self._renaming_folder = temp_folder
+                self.refresh_list()
+                self._select_item_by_path(temp_folder)
+                self.template_list.setFocus()
+                self.templates_changed.emit()
+            else:
+                # Move source to target's folder (or root if target has no folder)
+                if target_folder:
+                    new_name = library.move_file_template_to_folder(source_name, target_folder)
+                else:
+                    new_name = library.move_file_template_out_of_folder(source_name)
+                if new_name:
+                    if self._current_template == source_name:
+                        self._current_template = new_name
+                        self.reference_label.setText(f"Reference: template: {self._current_template}")
+                    self.templates_changed.emit()
+                self.refresh_list()
+
+    def _update_drag_hover(self, target_item):
+        """Update the visual highlight for the current drag hover target."""
+        if target_item == self._drag_hover_item:
+            return
+        
+        # Clear previous highlights
+        self._clear_drag_hover()
+        
+        if target_item is None:
+            return
+            
+        # Don't highlight the source item being dragged
+        target_path = target_item.data(ROLE_ITEM_PATH)
+        if target_path == self._drag_source_name:
+            return
+        
+        target_type = target_item.data(ROLE_ITEM_TYPE)
+        
+        # Don't highlight the add button
+        if target_type == "add_button":
+            return
+        
+        # Check if source is in a folder
+        source_folder = self._get_template_folder(self._drag_source_name) if self._drag_source_name else None
+        target_folder = None
+        if target_type == "template":
+            target_folder = self._get_template_folder(target_path)
+        elif target_type == "folder":
+            # Hovering over a folder means we'd move INTO it, not to root
+            target_folder = target_path
+        
+        # If dragging from a folder to ROOT level, highlight all ROOT-LEVEL items
+        # (templates not in any folder, plus folder headers - but not items inside other folders)
+        if source_folder and target_folder is None:
+            self._drag_hover_items = []
+            for i in range(self.template_list.count()):
+                item = self.template_list.item(i)
+                item_type = item.data(ROLE_ITEM_TYPE)
+                item_path = item.data(ROLE_ITEM_PATH)
+                
+                # Skip the source item and add button
+                if item_path == self._drag_source_name or item_type == "add_button":
+                    continue
+                
+                # Only highlight root-level items
+                if item_type == "folder":
+                    # Folder headers are at root level (but skip source's folder)
+                    if item_path != source_folder:
+                        widget = self.template_list.itemWidget(item)
+                        if widget:
+                            widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.3); border-radius: 4px;")
+                            self._drag_hover_items.append(item)
+                elif item_type == "template":
+                    # Only templates at root (not in any folder)
+                    item_folder = self._get_template_folder(item_path)
+                    if item_folder is None:
+                        widget = self.template_list.itemWidget(item)
+                        if widget:
+                            widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.3); border-radius: 4px;")
+                            self._drag_hover_items.append(item)
+        else:
+            # Normal single-item highlight
+            self._drag_hover_item = target_item
+            widget = self.template_list.itemWidget(target_item)
+            if widget:
+                widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.3); border-radius: 4px;")
+
+    def _clear_drag_hover(self):
+        """Clear the visual highlight from all drag hover targets."""
+        # Clear single hover item
+        if self._drag_hover_item is not None:
+            widget = self.template_list.itemWidget(self._drag_hover_item)
+            if widget:
+                widget.setStyleSheet("")
+            self._drag_hover_item = None
+        
+        # Clear multiple hover items (for "remove from folder" hint)
+        if hasattr(self, '_drag_hover_items') and self._drag_hover_items:
+            for item in self._drag_hover_items:
+                widget = self.template_list.itemWidget(item)
+                if widget:
+                    widget.setStyleSheet("")
+            self._drag_hover_items = []
 
     def _on_current_item_changed(self, current, previous):
         if self._refreshing or current is None:
             return
         if self._mouse_click_in_progress or self._pending_click_name or self._click_timer.isActive():
             return
+        
+        item_type = current.data(ROLE_ITEM_TYPE)
+        if item_type != "template":
+            return
+            
+        path = current.data(ROLE_ITEM_PATH)
         widget = self.template_list.itemWidget(current)
         if isinstance(widget, TemplateListItem):
-            name = widget.get_name()
-            if name and not widget._editable and name != self._current_template:
-                self._load_template(name)
+            if path and not widget._editable and path != self._current_template:
+                self._load_template(path)
 
     def _clear_mouse_click_flag(self):
         self._mouse_click_in_progress = False
@@ -1501,31 +2712,97 @@ class FileTemplatesPanel(QFrame):
         item = self.template_list.itemAt(pos)
         if item is None:
             return
+        
+        item_type = item.data(ROLE_ITEM_TYPE)
+        item_path = item.data(ROLE_ITEM_PATH)
         widget = self.template_list.itemWidget(item)
+        
+        if item_type == "folder":
+            if not isinstance(widget, FolderListItem) or widget._editable:
+                return
+            self.template_list.setCurrentItem(item)
+            menu = QMenu(self)
+            new_template_action = menu.addAction("New Template")
+            menu.addSeparator()
+            rename_action = menu.addAction("Rename")
+            show_action = menu.addAction("Show in Finder")
+            menu.addSeparator()
+            delete_action = menu.addAction("Delete")
+            action = menu.exec(self.template_list.viewport().mapToGlobal(pos))
+            if action == new_template_action:
+                self._create_new_template(folder=item_path)
+            elif action == rename_action:
+                self._start_rename_folder(item_path)
+            elif action == show_action:
+                folder_path = library.get_file_templates_dir() / item_path
+                if folder_path.exists():
+                    if sys.platform == "darwin":
+                        subprocess.run(["open", "-R", str(folder_path)])
+                    else:
+                        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder_path)))
+            elif action == delete_action:
+                self._delete_folder(item_path)
+            return
+            
+        if item_type != "template":
+            return
         if not isinstance(widget, TemplateListItem) or widget._editable:
             return
-        name = widget.get_name()
-        if not name:
+        if not item_path:
             return
-        content = library.get_file_template(name)
+        content = library.get_file_template(item_path)
         if content is None:
             return
         self.template_list.setCurrentItem(item)
         menu = QMenu(self)
         rename_action = menu.addAction("Rename")
         duplicate_action = menu.addAction("Duplicate")
+        
+        # Add move options
+        folder = self._get_template_folder(item_path)
+        folders = library.list_file_template_folders()
+        if folder or folders:
+            move_menu = menu.addMenu("Move to")
+            if folder:
+                move_root_action = move_menu.addAction("Root")
+            else:
+                move_root_action = None
+            for f in folders:
+                if f != folder:
+                    move_menu.addAction(f)
+        else:
+            move_menu = None
+            move_root_action = None
+        
         show_action = menu.addAction("Show in Finder")
         menu.addSeparator()
         delete_action = menu.addAction("Delete")
         action = menu.exec(self.template_list.viewport().mapToGlobal(pos))
         if action == rename_action:
-            self._start_rename_template(name)
+            self._start_rename_template(item_path)
         elif action == duplicate_action:
-            self._duplicate_template(name)
+            self._duplicate_template(item_path)
         elif action == show_action:
-            self._show_in_finder(name)
+            self._show_in_finder(item_path)
         elif action == delete_action:
-            self._delete_template(name)
+            self._delete_template(item_path)
+        elif move_menu and action:
+            if action == move_root_action:
+                new_name = library.move_file_template_out_of_folder(item_path)
+                if new_name:
+                    if self._current_template == item_path:
+                        self._current_template = new_name
+                        self.reference_label.setText(f"Reference: template: {self._current_template}")
+                    self.refresh_list()
+                    self.templates_changed.emit()
+            elif action.text() in folders:
+                new_name = library.move_file_template_to_folder(item_path, action.text())
+                if new_name:
+                    if self._current_template == item_path:
+                        self._current_template = new_name
+                        self.reference_label.setText(f"Reference: template: {self._current_template}")
+                    self.refresh_list()
+                    self.templates_changed.emit()
 
     def _start_rename_template(self, name: str):
         self._click_timer.stop()
@@ -1570,13 +2847,15 @@ class FileTemplatesPanel(QFrame):
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
 
     def _on_item_clicked(self, item: QListWidgetItem):
+        item_type = item.data(ROLE_ITEM_TYPE)
+        item_path = item.data(ROLE_ITEM_PATH)
         widget = self.template_list.itemWidget(item)
-        if isinstance(widget, TemplateListItem):
-            name = widget.get_name()
-            if name and not widget._editable:
-                if name == self._current_template:
+        
+        if item_type == "template" and isinstance(widget, TemplateListItem):
+            if item_path and not widget._editable:
+                if item_path == self._current_template:
                     return
-                self._pending_click_name = name
+                self._pending_click_name = item_path
                 if self._click_timer.receivers(self._click_timer.timeout) > 0:
                     self._click_timer.timeout.disconnect()
                 self._click_timer.timeout.connect(self._process_single_click)
@@ -1591,11 +2870,16 @@ class FileTemplatesPanel(QFrame):
         self._click_timer.stop()
         self._pending_click_name = None
 
+        item_type = item.data(ROLE_ITEM_TYPE)
+        item_path = item.data(ROLE_ITEM_PATH)
         widget = self.template_list.itemWidget(item)
-        if isinstance(widget, TemplateListItem) and not widget._editable:
-            name = widget.get_name()
-            if name:
-                self._renaming_template = name
+        
+        if item_type == "folder" and isinstance(widget, FolderListItem) and not widget._editable:
+            if item_path:
+                self._start_rename_folder(item_path)
+        elif item_type == "template" and isinstance(widget, TemplateListItem) and not widget._editable:
+            if item_path:
+                self._renaming_template = item_path
                 self.refresh_list()
 
     def _load_template(self, name: str):
@@ -1615,13 +2899,17 @@ class FileTemplatesPanel(QFrame):
             self.reference_label.setText(f"Reference: template: {name}")
             self.refresh_list()
 
-    def _create_new_template(self):
+    def _create_new_template(self, folder: str = None):
         self._stash_current_template()
         self._current_template = None
         self._has_unsaved_changes = False
         self._original_content = ""
         self._editing_new = True
+        self._new_template_folder = folder
         self._renaming_template = None
+        # Expand the folder if creating inside one
+        if folder:
+            self._folder_expanded[folder] = True
         self.editor.clear()
         self._reset_editor_scroll()
         self.reference_label.setText("Reference: template: <name>")
@@ -1629,41 +2917,68 @@ class FileTemplatesPanel(QFrame):
 
     def _on_new_name_confirmed(self, old_name: str, new_name: str):
         name = new_name.strip()
+        
+        # Prepend folder path if creating in a folder
+        if self._new_template_folder:
+            name = f"{self._new_template_folder}/{name}"
+        
         if name in library.list_file_template_names():
             decision = self._prompt_template_name_conflict(name)
             if decision == "cancel":
                 self._editing_new = False
+                self._new_template_folder = None
                 self.refresh_list()
                 self.template_list.setFocus()
                 return
             if decision == "keep":
                 name = self._next_available_template_name(name)
         self._editing_new = False
+        self._new_template_folder = None
         self._current_template = name
         self._save_template()
         self.template_list.setFocus()
 
     def _on_new_name_canceled(self, old_name: str):
         self._editing_new = False
+        self._new_template_folder = None
         self.refresh_list()
 
     def _on_rename_confirmed(self, old_name: str, new_name: str):
         self._renaming_template = None
-        if old_name != new_name and new_name:
-            content = library.get_file_template(old_name)
-            if content is not None:
-                library.delete_file_template(old_name)
-                library.save_file_template(new_name, content)
-                if self._current_template == old_name:
-                    self._current_template = new_name
-                self.reference_label.setText(f"Reference: template: {new_name}")
+        new_basename = new_name.strip()
+        if not new_basename:
+            self.refresh_list()
+            self.template_list.setFocus()
+            return
+        
+        # Preserve folder path when renaming
+        old_folder = self._get_template_folder(old_name)
+        if old_folder:
+            full_new_name = f"{old_folder}/{new_basename}"
+        else:
+            full_new_name = new_basename
+        
+        old_display = self._get_template_display_name(old_name)
+        if old_display == new_basename:
+            self.refresh_list()
+            self.template_list.setFocus()
+            return
+            
+        content = library.get_file_template(old_name)
+        if content is not None:
+            library.delete_file_template(old_name)
+            library.save_file_template(full_new_name, content)
+            if self._current_template == old_name:
+                self._current_template = full_new_name
+            self.reference_label.setText(f"Reference: template: {full_new_name}")
             if old_name in self._drafts:
-                self._drafts[new_name] = self._drafts.pop(old_name)
-            if self._current_template == new_name:
+                self._drafts[full_new_name] = self._drafts.pop(old_name)
+            if self._current_template == full_new_name:
                 self._original_content = content or ""
                 self._has_unsaved_changes = self.editor.toPlainText() != self._original_content
         self.refresh_list()
         self.template_list.setFocus()
+        self.templates_changed.emit()
 
     def _on_rename_canceled(self, old_name: str):
         self._renaming_template = None
@@ -1799,11 +3114,20 @@ class FileTemplatesPanel(QFrame):
             self.templates_changed.emit()
 
     def _delete_template(self, name: str):
-        """Delete a file template with slide animation."""
+        """Delete a file template with confirmation dialog and slide animation."""
+        # Show confirmation dialog
+        display_name = self._get_template_display_name(name)
+        dialog = DeleteConfirmationDialog(display_name, self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        if dialog.choice != DeleteConfirmationDialog.Choice.DELETE:
+            return
+
         for i in range(self.template_list.count()):
             item = self.template_list.item(i)
+            item_path = item.data(ROLE_ITEM_PATH)
             widget = self.template_list.itemWidget(item)
-            if isinstance(widget, TemplateListItem) and widget.get_name() == name:
+            if isinstance(widget, TemplateListItem) and item_path == name:
                 start_pos = widget.pos()
                 end_pos = QPoint(-widget.width(), start_pos.y())
 
@@ -1813,11 +3137,11 @@ class FileTemplatesPanel(QFrame):
                 animation.setEndValue(end_pos)
                 animation.setEasingCurve(QEasingCurve.Type.InQuad)
 
-                def on_finished():
-                    self.template_delete_requested.emit(name)
-                    library.delete_file_template(name)
-                    self._drafts.pop(name, None)
-                    if name == self._current_template:
+                def on_finished(template_name=name):
+                    self.template_delete_requested.emit(template_name)
+                    library.delete_file_template(template_name)
+                    self._drafts.pop(template_name, None)
+                    if template_name == self._current_template:
                         self._current_template = None
                         self._has_unsaved_changes = False
                         self._original_content = ""
@@ -1955,6 +3279,11 @@ class CustomTokensPanel(QFrame):
     def set_dark_mode(self, dark_mode: bool):
         self.editor.set_dark_mode(dark_mode)
 
+    def apply_font_size(self, size: int):
+        """Apply the font size to the code editor."""
+        from ..styles import get_code_font
+        self.editor.setFont(get_code_font(size))
+
     def eventFilter(self, obj, event):
         from PyQt6.QtCore import QEvent
         if obj in (self.token_list, self.token_list.viewport()):
@@ -2042,7 +3371,6 @@ result = "-".join(words)
                     name,
                     editable=True,
                     placeholder="TokenName",
-                    delete_square=True,
                 )
                 widget.name_edited.connect(self._on_rename_confirmed)
                 widget.name_canceled.connect(self._on_rename_canceled)
@@ -2063,8 +3391,6 @@ result = "-".join(words)
                 item = QListWidgetItem()
                 widget = TemplateListItem(
                     name,
-                    delete_square=True,
-                    delete_tooltip="Delete token",
                     badge_text=badge_text,
                     badge_tooltip="Python token" if badge_text else "",
                 )
@@ -2085,7 +3411,6 @@ result = "-".join(words)
                 "",
                 editable=True,
                 placeholder="TokenName",
-                delete_square=True,
             )
             widget.name_edited.connect(self._on_new_name_confirmed)
             widget.name_canceled.connect(self._on_new_name_canceled)
@@ -2096,7 +3421,7 @@ result = "-".join(words)
             QTimer.singleShot(50, widget.focus_edit)
 
         add_item = QListWidgetItem()
-        add_widget = AddTemplateButton()
+        add_widget = AddTemplateButton(show_folder_button=False)
         add_widget.clicked.connect(self._create_new_token)
         add_item.setSizeHint(QSize(0, add_widget.sizeHint().height()))
         add_item.setFlags(

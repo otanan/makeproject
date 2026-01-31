@@ -90,6 +90,10 @@ class TemplateMetadata:
 _METADATA_MARKER = re.compile(r'^\s*#\s*---\s*$')
 
 
+def _load_metadata_yaml(block: str) -> Any:
+    return yaml.load(block, Loader=yaml.BaseLoader)
+
+
 def _extract_metadata_block_with_start(text: str) -> tuple[str | None, int | None]:
     lines = text.splitlines()
     index = 0
@@ -166,7 +170,7 @@ def parse_template_metadata(text: str) -> TemplateMetadata | None:
     if not block:
         return None
     try:
-        data = yaml.safe_load(block)
+        data = _load_metadata_yaml(block)
     except yaml.YAMLError:
         return None
     if not isinstance(data, dict):
@@ -181,7 +185,7 @@ def parse_template_metadata_with_error(
     if not block:
         return None, None, None
     try:
-        data = yaml.safe_load(block)
+        data = _load_metadata_yaml(block)
     except yaml.YAMLError as exc:
         line = None
         if hasattr(exc, "problem_mark") and exc.problem_mark:
@@ -995,7 +999,6 @@ def generate_project(
 
 # Default YAML template for new projects
 DEFAULT_YAML = '''# ---
-# name: Example Project Template
 # description: Template description shown as tooltip.
 # fields:
 #   - token: due_date

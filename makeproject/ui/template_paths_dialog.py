@@ -4,7 +4,7 @@ Template path configuration dialog for MakeProject.
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
     QLineEdit,
@@ -19,16 +19,21 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QStackedWidget,
     QWidget,
+    QSpinBox,
 )
 
 from .dialog_utils import style_default_dialog_button
 from .editors import CodeEditor
 from .panels import SegmentedControl
 from ..highlighter import PythonHighlighter
+from .. import library
 
 
 class TemplatePathsDialog(QDialog):
     """Dialog for configuring MakeProject settings."""
+
+    ui_font_size_changed = pyqtSignal(int)
+    editor_font_size_changed = pyqtSignal(int)
 
     def __init__(
         self,
@@ -43,6 +48,8 @@ class TemplatePathsDialog(QDialog):
         python_interpreter_path: Path,
         default_python_interpreter_path: Path,
         python_preamble: str,
+        ui_font_size: int,
+        editor_font_size: int,
         dark_mode: bool = True,
         parent=None,
     ):
@@ -50,6 +57,9 @@ class TemplatePathsDialog(QDialog):
         self.setWindowTitle("MakeProject Settings")
         self.setModal(True)
         self.setMinimumSize(760, 420)
+
+        self._initial_ui_font_size = ui_font_size
+        self._initial_editor_font_size = editor_font_size
 
         self._project_input = QLineEdit()
         self._project_input.setText(str(project_path))
@@ -206,10 +216,61 @@ def f(x):
         python_layout.addWidget(self._python_preamble_editor, 1)
         python_layout.addWidget(preamble_hint)
 
-        tabs = SegmentedControl(["Template Locations", "Python Settings"])
+        # --- General Page ---
+        self._ui_font_size_spinbox = QSpinBox()
+        self._ui_font_size_spinbox.setRange(8, 36)
+        self._ui_font_size_spinbox.setValue(ui_font_size)
+        self._ui_font_size_spinbox.setSuffix(" pt")
+        self._ui_font_size_spinbox.setToolTip("Font size for UI elements like labels, buttons, and lists")
+        self._ui_font_size_spinbox.valueChanged.connect(self._on_ui_font_size_changed)
+
+        self._editor_font_size_spinbox = QSpinBox()
+        self._editor_font_size_spinbox.setRange(8, 36)
+        self._editor_font_size_spinbox.setValue(editor_font_size)
+        self._editor_font_size_spinbox.setSuffix(" pt")
+        self._editor_font_size_spinbox.setToolTip("Font size for YAML and file template editors")
+        self._editor_font_size_spinbox.valueChanged.connect(self._on_editor_font_size_changed)
+
+        general_form = QFormLayout()
+        general_form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+        general_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        general_form.addRow("UI font size:", self._ui_font_size_spinbox)
+        general_form.addRow("Editor font size:", self._editor_font_size_spinbox)
+
+        ui_hint = QLabel(
+            "UI font size affects labels, buttons, lists, and other interface elements."
+        )
+        ui_hint.setWordWrap(True)
+        ui_hint.setProperty("class", "muted")
+
+        editor_hint = QLabel(
+            "Editor font size affects the YAML editor and file template editor."
+        )
+        editor_hint.setWordWrap(True)
+        editor_hint.setProperty("class", "muted")
+
+        shortcut_label = QLabel(
+            "Tip: Use Cmd + and Cmd - (or Ctrl on Windows/Linux) to quickly adjust editor font size."
+        )
+        shortcut_label.setWordWrap(True)
+        shortcut_label.setProperty("class", "muted")
+
+        general_page = QWidget()
+        general_layout = QVBoxLayout(general_page)
+        general_layout.setContentsMargins(0, 0, 0, 0)
+        general_layout.setSpacing(8)
+        general_layout.addLayout(general_form)
+        general_layout.addWidget(ui_hint)
+        general_layout.addWidget(editor_hint)
+        general_layout.addSpacing(12)
+        general_layout.addWidget(shortcut_label)
+        general_layout.addStretch(1)
+
+        tabs = SegmentedControl(["General", "Template Locations", "Python Settings"])
         self._tabs = tabs
 
         stacked = QStackedWidget()
+        stacked.addWidget(general_page)
         stacked.addWidget(template_page)
         stacked.addWidget(python_page)
         self._stacked = stacked
@@ -286,3 +347,21 @@ def f(x):
 
     def should_move_existing(self) -> bool:
         return self._move_checkbox.isChecked()
+
+    def ui_font_size(self) -> int:
+        return self._ui_font_size_spinbox.value()
+
+    def editor_font_size(self) -> int:
+        return self._editor_font_size_spinbox.value()
+
+    def ui_font_size_was_changed(self) -> bool:
+        return self._ui_font_size_spinbox.value() != self._initial_ui_font_size
+
+    def editor_font_size_was_changed(self) -> bool:
+        return self._editor_font_size_spinbox.value() != self._initial_editor_font_size
+
+    def _on_ui_font_size_changed(self, value: int):
+        self.ui_font_size_changed.emit(value)
+
+    def _on_editor_font_size_changed(self, value: int):
+        self.editor_font_size_changed.emit(value)

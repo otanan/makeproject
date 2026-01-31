@@ -12,12 +12,12 @@ QFrame#titleBar {
 }
 
 QLabel#titleLabel {
-    font-size: 16px;
+    font-size: {{font_size_title}}px;
     font-weight: 600;
 }
 
 QLabel#darkModeLabel {
-    font-size: 12px;
+    font-size: {{font_size_base}}px;
 }
 
 /* Window control buttons - macOS traffic light style */
@@ -66,7 +66,7 @@ QFrame.panel {
 }
 
 QLabel.panelHeader {
-    font-size: 14px;
+    font-size: {{font_size_header}}px;
     font-weight: 600;
     letter-spacing: 0.5px;
     text-transform: uppercase;
@@ -87,6 +87,23 @@ QLineEdit {
     border-style: solid;
     border-radius: 6px;
     padding: 6px 10px;
+    font-size: {{font_size_input}}px;
+}
+
+/* === Spin Box === */
+QSpinBox {
+    border-width: 1px;
+    border-style: solid;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: {{font_size_input}}px;
+    min-width: 60px;
+}
+
+QSpinBox::up-button,
+QSpinBox::down-button {
+    width: 0px;
+    border: none;
 }
 
 /* === Buttons === */
@@ -97,13 +114,14 @@ QPushButton {
     padding: 4px 10px;
     font-weight: 500;
     min-width: 50px;
+    font-size: {{font_size_base}}px;
 }
 
 /* Primary button */
 QPushButton#primaryButton {
     border: none;
     font-weight: 600;
-    font-size: 15px;
+    font-size: {{font_size_primary}}px;
     padding: 8px 20px;
     min-width: 160px;
 }
@@ -113,7 +131,7 @@ QPushButton.iconButton {
     border-width: 1px;
     border-style: solid;
     border-radius: 4px;
-    font-size: 16px;
+    font-size: {{font_size_icon}}px;
     font-weight: bold;
     padding: 0px;
 }
@@ -122,7 +140,7 @@ QPushButton.iconButton {
 QPushButton.addButton, QPushButton.deleteButton {
     border: none;
     border-radius: 5px;
-    font-size: 18px;
+    font-size: {{font_size_add_button}}px;
     font-weight: bold;
     padding: 0px;
     margin: 0px;
@@ -140,7 +158,7 @@ QLineEdit.inlineEdit {
 
 QLabel.tokenBadge {
     border-radius: 8px;
-    font-size: 10px;
+    font-size: {{font_size_badge}}px;
     font-weight: 600;
     letter-spacing: 0.4px;
     padding: 1px 6px;
@@ -153,14 +171,13 @@ QListWidget {
     border-style: solid;
     border-radius: 6px;
     outline: none;
+    font-size: {{font_size_list_item}}px;
 }
 
 QListWidget::item {
-    padding-top: 0px;
-    padding-right: 0px;
-    padding-bottom: 0px;
-    padding-left: 10px;
+    padding: 0px;
     border-radius: 0px;
+    font-size: {{font_size_list_item}}px;
 }
 
 QListWidget::item:disabled {
@@ -174,11 +191,13 @@ QTreeWidget {
     border-style: solid;
     border-radius: 6px;
     outline: none;
+    font-size: {{font_size_list_item}}px;
 }
 
 QTreeWidget::item {
     padding: 3px 4px;
     background-color: transparent;
+    font-size: {{font_size_list_item}}px;
 }
 
 QTreeWidget::branch {
@@ -252,6 +271,7 @@ QPushButton.segmentButton {
     border-radius: 4px;
     padding: 6px 12px;
     font-weight: 500;
+    font-size: {{font_size_base}}px;
 }
 
 /* === Scroll Bars === */
@@ -370,6 +390,10 @@ QFrame#previewPanel {
 }
 
 /* === Labels === */
+QLabel {
+    font-size: {{font_size_base}}px;
+}
+
 QLabel.reference {
-    font-size: 11px;
+    font-size: {{font_size_reference}}px;
 }

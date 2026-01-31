@@ -77,6 +77,19 @@ QLineEdit::placeholder {
     color: #6C7086;
 }
 
+/* === Spin Box === */
+QSpinBox {
+    background-color: #313244;
+    color: #CDD6F4;
+    border-color: #45475A;
+    selection-background-color: rgba(26, 188, 157, 0.3);
+    selection-color: #CDD6F4;
+}
+
+QSpinBox:focus {
+    border-color: #1ABC9D;
+}
+
 /* === Buttons === */
 QPushButton {
     background-color: #313244;

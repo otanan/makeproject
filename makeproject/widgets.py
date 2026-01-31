@@ -171,6 +171,21 @@ class IndentTextEdit(QPlainTextEdit):
         self.line_number_area.update()
         # Re-apply current line highlight with new theme colors
         self.highlight_current_line()
+
+    def setFont(self, font):
+        """Override setFont to update line number area when font changes."""
+        super().setFont(font)
+        # Update line number area width based on new font metrics
+        self.update_line_number_area_width(0)
+        # Resize the line number area geometry
+        cr = self.contentsRect()
+        self.line_number_area.setGeometry(
+            cr.left(), cr.top(),
+            self.line_number_area_width(),
+            cr.height()
+        )
+        # Repaint the line number area
+        self.line_number_area.update()
     
     def line_number_area_width(self):
         """Calculate the width needed for line numbers."""
@@ -392,6 +407,15 @@ class IndentTextEdit(QPlainTextEdit):
     def setPlainText(self, text: str):
         super().setPlainText(text)
         self._update_placeholder_visibility()
+        # Ensure line number area is properly refreshed after text change
+        self.update_line_number_area_width(0)
+        cr = self.contentsRect()
+        self.line_number_area.setGeometry(
+            cr.left(), cr.top(),
+            self.line_number_area_width(),
+            cr.height()
+        )
+        self.line_number_area.update()
 
     def _update_placeholder_style(self):
         color = "#6C7086" if self._dark_mode else "#9CA3AF"
