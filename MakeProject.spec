@@ -3,15 +3,25 @@
 import re
 from pathlib import Path
 
+from PyInstaller.utils.hooks import get_package_paths
+
 version_text = (Path("makeproject") / "__init__.py").read_text(encoding="utf-8")
 match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', version_text)
 app_version = match.group(1) if match else "0.0.0"
 
 
+_, pyqt6_path = get_package_paths("PyQt6")
+qt_plugins = []
+for plugin_group in ("platforms", "imageformats", "iconengines"):
+    plugin_dir = Path(pyqt6_path) / "Qt6" / "plugins" / plugin_group
+    if plugin_dir.exists():
+        for plugin in plugin_dir.glob("*.dylib"):
+            qt_plugins.append((str(plugin), f"PyQt6/Qt6/plugins/{plugin_group}"))
+
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=[],
+    binaries=qt_plugins,
     datas=[
         ('makeproject/styles_base.qss', 'makeproject'),
         ('makeproject/styles_dark.qss', 'makeproject'),

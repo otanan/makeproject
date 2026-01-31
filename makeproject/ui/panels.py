@@ -401,7 +401,8 @@ class ProjectTemplatesPanel(QFrame):
             tooltip = self._get_template_tooltip(name)
             if tooltip:
                 widget.setToolTip(tooltip)
-            widget.rename_requested.connect(lambda n=name: self._start_rename_template(n))
+            # Ignore emitted display name; use full path captured from the list item.
+            widget.rename_requested.connect(lambda _unused=None, n=name: self._start_rename_template(n))
             widget.delete_clicked.connect(lambda n=name: self._delete_template(n))
             if name in unsaved_names:
                 widget.set_unsaved(True)
@@ -2270,7 +2271,8 @@ class FileTemplatesPanel(QFrame):
             widget = TemplateListItem(
                 display_name,
             )
-            widget.rename_requested.connect(lambda n=name: self._start_rename_template(n))
+            # Ignore emitted display name; use full path captured from the list item.
+            widget.rename_requested.connect(lambda _unused=None, n=name: self._start_rename_template(n))
             widget.delete_clicked.connect(lambda n=name: self._delete_template(n))
             if name in unsaved_names:
                 widget.set_unsaved(True)
