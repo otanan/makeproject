@@ -9,6 +9,8 @@ import yaml
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .constants import FontSizes, FileSystem, Defaults, CacheLimits
+
 # Application Support paths
 APP_SUPPORT_DIR = Path.home() / "Library" / "Application Support" / "MakeProject"
 DEFAULT_PROJECT_TEMPLATES_DIR = APP_SUPPORT_DIR / "project_templates"
@@ -26,10 +28,26 @@ UI_FONT_SIZE_PREF_KEY = "ui_font_size"
 EDITOR_FONT_SIZE_PREF_KEY = "editor_font_size"
 DEFAULT_PYTHON_INTERPRETER = Path(sys.executable)
 DEFAULT_PROJECT_GENERATION_DIR = Path.home()
-DEFAULT_UI_FONT_SIZE = 12  # Base UI font size in points
-DEFAULT_EDITOR_FONT_SIZE = 12  # Base editor font size in points
-IGNORED_TEMPLATE_DIRS = {".git", ".hg", ".svn"}
-IGNORED_TEMPLATE_FILES = {".DS_Store", ".localized", "Thumbs.db", "desktop.ini"}
+DEFAULT_UI_FONT_SIZE = FontSizes.DEFAULT_UI
+DEFAULT_EDITOR_FONT_SIZE = FontSizes.DEFAULT_EDITOR
+IGNORED_TEMPLATE_DIRS = FileSystem.IGNORED_VCS_DIRS
+IGNORED_TEMPLATE_FILES = FileSystem.IGNORED_OS_FILES
+
+# Preference caching - reduces YAML parsing overhead
+_preferences_cache = None
+_preferences_mtime = None
+
+# Template list caching - reduces rglob() overhead
+_template_list_cache = None
+_template_folders_cache = None
+_template_dir_mtime = None
+_template_dir_last_checked = None
+
+# Template content caching - reduces disk I/O on repeated loads (LRU cache)
+from collections import OrderedDict
+_template_content_cache = OrderedDict()  # name -> content
+_template_content_mtimes = {}  # name -> mtime (for external change detection)
+_template_content_max_size = CacheLimits.TEMPLATE_CONTENT_CACHE
 
 # Default file templates seeded on first run (use actual file extensions)
 DEFAULT_FILE_TEMPLATES = {
@@ -128,29 +146,17 @@ def initialize():
 
 def get_project_templates_dir() -> Path:
     """Return the project templates directory, honoring user preferences."""
-    prefs = load_preferences()
-    path_value = prefs.get("project_templates_dir")
-    if isinstance(path_value, str) and path_value.strip():
-        return Path(path_value).expanduser()
-    return DEFAULT_PROJECT_TEMPLATES_DIR
+    return _get_path_preference("project_templates_dir", DEFAULT_PROJECT_TEMPLATES_DIR)
 
 
 def get_file_templates_dir() -> Path:
     """Return the file templates directory, honoring user preferences."""
-    prefs = load_preferences()
-    path_value = prefs.get("file_templates_dir")
-    if isinstance(path_value, str) and path_value.strip():
-        return Path(path_value).expanduser()
-    return DEFAULT_FILE_TEMPLATES_DIR
+    return _get_path_preference("file_templates_dir", DEFAULT_FILE_TEMPLATES_DIR)
 
 
 def get_custom_tokens_path() -> Path:
     """Return the custom tokens file path, honoring user preferences."""
-    prefs = load_preferences()
-    path_value = prefs.get(CUSTOM_TOKENS_PREF_KEY)
-    if isinstance(path_value, str) and path_value.strip():
-        return Path(path_value).expanduser()
-    return CUSTOM_TOKENS_PATH
+    return _get_path_preference(CUSTOM_TOKENS_PREF_KEY, CUSTOM_TOKENS_PATH)
 
 
 def set_custom_tokens_path(custom_tokens_path: Path):
@@ -181,39 +187,17 @@ def get_project_generation_dir() -> Path:
 
 def set_project_generation_dir(project_generation_dir: Optional[Path]):
     """Persist the default start directory for project generation."""
-    prefs = load_preferences()
-    if project_generation_dir is None:
-        prefs.pop(PROJECT_GENERATION_DIR_PREF_KEY, None)
-    else:
-        path_value = str(project_generation_dir).strip()
-        if path_value:
-            prefs[PROJECT_GENERATION_DIR_PREF_KEY] = path_value
-        else:
-            prefs.pop(PROJECT_GENERATION_DIR_PREF_KEY, None)
-    save_preferences(prefs)
+    _set_path_preference(PROJECT_GENERATION_DIR_PREF_KEY, project_generation_dir)
 
 
 def get_python_interpreter_path() -> Path:
     """Return the Python interpreter path, honoring user preferences."""
-    prefs = load_preferences()
-    path_value = prefs.get(PYTHON_INTERPRETER_PREF_KEY)
-    if isinstance(path_value, str) and path_value.strip():
-        return Path(path_value).expanduser()
-    return DEFAULT_PYTHON_INTERPRETER
+    return _get_path_preference(PYTHON_INTERPRETER_PREF_KEY, DEFAULT_PYTHON_INTERPRETER)
 
 
 def set_python_interpreter_path(python_interpreter_path: Optional[Path]):
     """Persist the Python interpreter path preference."""
-    prefs = load_preferences()
-    if python_interpreter_path is None:
-        prefs.pop(PYTHON_INTERPRETER_PREF_KEY, None)
-    else:
-        path_value = str(python_interpreter_path).strip()
-        if path_value:
-            prefs[PYTHON_INTERPRETER_PREF_KEY] = path_value
-        else:
-            prefs.pop(PYTHON_INTERPRETER_PREF_KEY, None)
-    save_preferences(prefs)
+    _set_path_preference(PYTHON_INTERPRETER_PREF_KEY, python_interpreter_path)
 
 
 def get_python_preamble() -> str:
@@ -232,40 +216,22 @@ def set_python_preamble(preamble: str):
 
 def get_ui_font_size() -> int:
     """Return the UI font size."""
-    prefs = load_preferences()
-    size = prefs.get(UI_FONT_SIZE_PREF_KEY, DEFAULT_UI_FONT_SIZE)
-    if isinstance(size, int) and 8 <= size <= 36:
-        return size
-    return DEFAULT_UI_FONT_SIZE
+    return _get_int_preference(UI_FONT_SIZE_PREF_KEY, DEFAULT_UI_FONT_SIZE, FontSizes.MIN, FontSizes.MAX)
 
 
 def set_ui_font_size(size: int):
     """Persist the UI font size preference."""
-    prefs = load_preferences()
-    if isinstance(size, int) and 8 <= size <= 36:
-        prefs[UI_FONT_SIZE_PREF_KEY] = size
-    else:
-        prefs[UI_FONT_SIZE_PREF_KEY] = DEFAULT_UI_FONT_SIZE
-    save_preferences(prefs)
+    _set_int_preference(UI_FONT_SIZE_PREF_KEY, size, DEFAULT_UI_FONT_SIZE, FontSizes.MIN, FontSizes.MAX)
 
 
 def get_editor_font_size() -> int:
     """Return the editor font size for code editors."""
-    prefs = load_preferences()
-    size = prefs.get(EDITOR_FONT_SIZE_PREF_KEY, DEFAULT_EDITOR_FONT_SIZE)
-    if isinstance(size, int) and 8 <= size <= 36:
-        return size
-    return DEFAULT_EDITOR_FONT_SIZE
+    return _get_int_preference(EDITOR_FONT_SIZE_PREF_KEY, DEFAULT_EDITOR_FONT_SIZE, FontSizes.MIN, FontSizes.MAX)
 
 
 def set_editor_font_size(size: int):
     """Persist the editor font size preference."""
-    prefs = load_preferences()
-    if isinstance(size, int) and 8 <= size <= 36:
-        prefs[EDITOR_FONT_SIZE_PREF_KEY] = size
-    else:
-        prefs[EDITOR_FONT_SIZE_PREF_KEY] = DEFAULT_EDITOR_FONT_SIZE
-    save_preferences(prefs)
+    _set_int_preference(EDITOR_FONT_SIZE_PREF_KEY, size, DEFAULT_EDITOR_FONT_SIZE, FontSizes.MIN, FontSizes.MAX)
 
 
 # --- Project Templates ---
@@ -296,6 +262,33 @@ def _project_template_path_from_name(name: str) -> Optional[Path]:
     return get_project_templates_dir() / f"{path}.yaml"
 
 
+def _get_dir_mtime(path: Path) -> float:
+    """Get the latest modification time in a directory tree (for cache invalidation)."""
+    if not path.exists():
+        return 0.0
+    try:
+        max_mtime = path.stat().st_mtime
+        # Check all files and subdirectories
+        for item in path.rglob("*"):
+            try:
+                item_mtime = item.stat().st_mtime
+                if item_mtime > max_mtime:
+                    max_mtime = item_mtime
+            except OSError:
+                continue
+        return max_mtime
+    except OSError:
+        return 0.0
+
+
+def _invalidate_template_cache():
+    """Invalidate the template list cache (call after any template operation)."""
+    global _template_list_cache, _template_folders_cache, _template_dir_mtime
+    _template_list_cache = None
+    _template_folders_cache = None
+    _template_dir_mtime = None
+
+
 def _iter_project_template_files() -> List[Path]:
     """Iterate all project template files, including those in subdirectories."""
     base_dir = get_project_templates_dir()
@@ -316,9 +309,21 @@ def _iter_project_template_files() -> List[Path]:
 def list_project_templates() -> List[str]:
     """List all saved project template names (with folder paths, without extension).
     Returns templates sorted alphabetically (case-insensitive).
+    Uses caching to avoid repeated rglob() scans.
     """
+    global _template_list_cache, _template_dir_mtime, _template_dir_last_checked
+
     ensure_directories()
     base_dir = get_project_templates_dir()
+
+    # Check if cache is valid
+    current_mtime = _get_dir_mtime(base_dir)
+    if (_template_list_cache is not None and
+        _template_dir_last_checked == base_dir and
+        _template_dir_mtime == current_mtime):
+        return _template_list_cache.copy()
+
+    # Cache miss or invalidated - rebuild from disk
     templates = []
     for f in _iter_project_template_files():
         rel = f.relative_to(base_dir)
@@ -327,13 +332,31 @@ def list_project_templates() -> List[str]:
         templates.append(name)
     # Sort alphabetically (case-insensitive)
     templates.sort(key=lambda x: x.lower())
+
+    # Update cache
+    _template_list_cache = templates.copy()
+    _template_dir_mtime = current_mtime
+    _template_dir_last_checked = base_dir
     return templates
 
 
 def list_project_template_folders() -> List[str]:
-    """List all project template folder names (including empty folders)."""
+    """List all project template folder names (including empty folders).
+    Uses caching to avoid repeated directory scans.
+    """
+    global _template_folders_cache, _template_dir_mtime, _template_dir_last_checked
+
     ensure_directories()
     base_dir = get_project_templates_dir()
+
+    # Check if cache is valid
+    current_mtime = _get_dir_mtime(base_dir)
+    if (_template_folders_cache is not None and
+        _template_dir_last_checked == base_dir and
+        _template_dir_mtime == current_mtime):
+        return _template_folders_cache.copy()
+
+    # Cache miss or invalidated - rebuild from disk
     folders = set()
     # Include folders inferred from template file paths
     for f in _iter_project_template_files():
@@ -345,7 +368,13 @@ def list_project_template_folders() -> List[str]:
     for item in base_dir.iterdir():
         if item.is_dir() and not item.name.startswith('.'):
             folders.add(item.name)
-    return sorted(folders)
+
+    # Update cache
+    result = sorted(folders)
+    _template_folders_cache = result.copy()
+    _template_dir_mtime = current_mtime
+    _template_dir_last_checked = base_dir
+    return result
 
 
 def get_project_templates_in_folder(folder: str) -> List[str]:
@@ -369,12 +398,65 @@ def get_project_templates_in_folder(folder: str) -> List[str]:
     return templates
 
 
+def _cache_template_content(name: str, content: str, mtime: float):
+    """Add template content to cache with LRU eviction."""
+    global _template_content_cache, _template_content_mtimes
+
+    # If already in cache, move to end (mark as recently used)
+    if name in _template_content_cache:
+        _template_content_cache.move_to_end(name)
+        _template_content_cache[name] = content
+        _template_content_mtimes[name] = mtime
+    else:
+        # Check if cache is full
+        if len(_template_content_cache) >= _template_content_max_size:
+            # Remove least recently used (first item)
+            oldest_name = next(iter(_template_content_cache))
+            _template_content_cache.pop(oldest_name)
+            _template_content_mtimes.pop(oldest_name, None)
+
+        # Add new entry
+        _template_content_cache[name] = content
+        _template_content_mtimes[name] = mtime
+
+
 def load_project_template(name: str) -> Optional[str]:
-    """Load a project template's YAML content by name (supports folder paths)."""
+    """Load a project template's YAML content by name (supports folder paths).
+    Uses LRU cache with mtime checking to detect external changes.
+    """
+    global _template_content_cache, _template_content_mtimes
+
     path = _project_template_path_from_name(name)
-    if path and path.exists():
-        return path.read_text(encoding="utf-8")
-    return None
+    if not path or not path.exists():
+        return None
+
+    try:
+        # Check if we have a cached version
+        if name in _template_content_cache:
+            # Verify file hasn't been modified externally (mtime check)
+            current_mtime = path.stat().st_mtime
+            cached_mtime = _template_content_mtimes.get(name)
+
+            if cached_mtime is not None and cached_mtime == current_mtime:
+                # Cache hit - mark as recently used and return
+                _template_content_cache.move_to_end(name)
+                return _template_content_cache[name]
+
+            # File modified externally - cache invalidated, will reload
+
+        # Cache miss or invalidated - load from disk
+        content = path.read_text(encoding="utf-8")
+        current_mtime = path.stat().st_mtime
+
+        # Cache the content
+        _cache_template_content(name, content, current_mtime)
+
+        return content
+    except Exception:
+        # If any error occurs, remove from cache and return None
+        _template_content_cache.pop(name, None)
+        _template_content_mtimes.pop(name, None)
+        return None
 
 
 def get_project_template_path(name: str) -> Path:
@@ -394,14 +476,31 @@ def save_project_template(name: str, content: str):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
 
+    # Update content cache with saved content
+    try:
+        mtime = path.stat().st_mtime
+        _cache_template_content(name, content, mtime)
+    except Exception:
+        pass
+
+    _invalidate_template_cache()
+
 
 def delete_project_template(name: str) -> bool:
     """Delete a project template by name (supports folder paths). Returns True if deleted."""
+    global _template_content_cache, _template_content_mtimes
+
     path = _project_template_path_from_name(name)
     if path and path.exists():
         path.unlink()
         # Clean up empty parent folders
         _cleanup_empty_project_folders(path.parent)
+
+        # Remove from content cache
+        _template_content_cache.pop(name, None)
+        _template_content_mtimes.pop(name, None)
+
+        _invalidate_template_cache()
         return True
     return False
 
@@ -413,6 +512,8 @@ def _cleanup_empty_project_folders(folder: Path):
 
 def rename_project_template(old_name: str, new_name: str) -> bool:
     """Rename a project template (supports folder paths). Returns True if renamed."""
+    global _template_content_cache, _template_content_mtimes
+
     old_path = _project_template_path_from_name(old_name)
     new_path = _project_template_path_from_name(new_name)
     
@@ -434,6 +535,15 @@ def rename_project_template(old_name: str, new_name: str) -> bool:
                 old_path.rename(temp_path)
                 temp_path.rename(new_path)
                 _cleanup_empty_project_folders(old_path.parent)
+
+                # Update content cache: move old entry to new name
+                if old_name in _template_content_cache:
+                    content = _template_content_cache.pop(old_name)
+                    mtime = _template_content_mtimes.pop(old_name, None)
+                    if mtime is not None:
+                        _cache_template_content(new_name, content, mtime)
+
+                _invalidate_template_cache()
                 return True
         except OSError:
             pass
@@ -442,6 +552,15 @@ def rename_project_template(old_name: str, new_name: str) -> bool:
     if not new_path.exists():
         old_path.rename(new_path)
         _cleanup_empty_project_folders(old_path.parent)
+
+        # Update content cache: move old entry to new name
+        if old_name in _template_content_cache:
+            content = _template_content_cache.pop(old_name)
+            mtime = _template_content_mtimes.pop(old_name, None)
+            if mtime is not None:
+                _cache_template_content(new_name, content, mtime)
+
+        _invalidate_template_cache()
         return True
     
     return False
@@ -449,41 +568,63 @@ def rename_project_template(old_name: str, new_name: str) -> bool:
 
 def move_project_template_to_folder(name: str, folder: str) -> str | None:
     """Move a project template into a folder. Returns new name or None on failure."""
+    global _template_content_cache, _template_content_mtimes
+
     old_path = _project_template_path_from_name(name)
     if not old_path or not old_path.exists():
         return None
-    
+
     # Extract just the template name without any existing folder
     template_basename = Path(name).name
     new_name = f"{folder}/{template_basename}"
     new_path = _project_template_path_from_name(new_name)
-    
+
     if not new_path:
         return None
     if new_path.exists():
         return None
-    
+
     new_path.parent.mkdir(parents=True, exist_ok=True)
     old_path.rename(new_path)
     _cleanup_empty_project_folders(old_path.parent)
+
+    # Update content cache: move old entry to new name
+    if name in _template_content_cache:
+        content = _template_content_cache.pop(name)
+        mtime = _template_content_mtimes.pop(name, None)
+        if mtime is not None:
+            _cache_template_content(new_name, content, mtime)
+
+    _invalidate_template_cache()
     return new_name
 
 
 def move_project_template_out_of_folder(name: str) -> str | None:
     """Move a project template out of its folder to the root. Returns new name or None."""
+    global _template_content_cache, _template_content_mtimes
+
     old_path = _project_template_path_from_name(name)
     if not old_path or not old_path.exists():
         return None
-    
+
     # Extract just the template name
     template_basename = Path(name).name
     new_path = get_project_templates_dir() / f"{template_basename}.yaml"
-    
+
     if new_path.exists():
         return None
-    
+
     old_path.rename(new_path)
     _cleanup_empty_project_folders(old_path.parent)
+
+    # Update content cache: move old entry to new name
+    if name in _template_content_cache:
+        content = _template_content_cache.pop(name)
+        mtime = _template_content_mtimes.pop(name, None)
+        if mtime is not None:
+            _cache_template_content(template_basename, content, mtime)
+
+    _invalidate_template_cache()
     return template_basename
 
 
@@ -497,6 +638,7 @@ def create_project_template_folder(folder: str) -> bool:
     if folder_path.exists():
         return False
     folder_path.mkdir(parents=True, exist_ok=True)
+    _invalidate_template_cache()
     return True
 
 
@@ -510,8 +652,9 @@ def rename_project_template_folder(old_name: str, new_name: str) -> bool:
         return False
     if new_path.exists():
         return False
-    
+
     old_path.rename(new_path)
+    _invalidate_template_cache()
     return True
 
 
@@ -523,6 +666,7 @@ def delete_project_template_folder(folder: str) -> bool:
         return False
     import shutil
     shutil.rmtree(folder_path)
+    _invalidate_template_cache()
     return True
 
 
@@ -903,23 +1047,81 @@ def delete_custom_token(name: str) -> bool:
 # --- Preferences ---
 
 def load_preferences() -> Dict:
-    """Load user preferences from disk."""
+    """Load user preferences from disk with caching."""
+    global _preferences_cache, _preferences_mtime
     _ensure_app_support_dir()
+
     if PREFERENCES_PATH.exists():
         try:
+            # Check if cache is valid by comparing modification time
+            current_mtime = PREFERENCES_PATH.stat().st_mtime
+            if _preferences_cache is not None and _preferences_mtime == current_mtime:
+                return _preferences_cache.copy()
+
+            # Cache miss or invalidated - load from disk
             with open(PREFERENCES_PATH, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
-                return data if isinstance(data, dict) else {}
+                _preferences_cache = data if isinstance(data, dict) else {}
+                _preferences_mtime = current_mtime
+                return _preferences_cache.copy()
         except Exception:
             return {}
     return {}
 
 
 def save_preferences(prefs: Dict):
-    """Save user preferences to disk."""
+    """Save user preferences to disk and update cache."""
+    global _preferences_cache, _preferences_mtime
     _ensure_app_support_dir()
     with open(PREFERENCES_PATH, "w", encoding="utf-8") as f:
         yaml.dump(prefs, f, default_flow_style=False, allow_unicode=True)
+
+    # Update cache with the saved data
+    _preferences_cache = prefs.copy()
+    _preferences_mtime = PREFERENCES_PATH.stat().st_mtime if PREFERENCES_PATH.exists() else None
+
+
+# Preference helper functions - reduce duplication in get/set methods
+def _get_path_preference(key: str, default: Path) -> Path:
+    """Generic path preference getter with validation and expansion."""
+    prefs = load_preferences()
+    path_value = prefs.get(key)
+    if isinstance(path_value, str) and path_value.strip():
+        return Path(path_value).expanduser()
+    return default
+
+
+def _set_path_preference(key: str, value: Optional[Path]):
+    """Generic path preference setter with None handling."""
+    prefs = load_preferences()
+    if value is None:
+        prefs.pop(key, None)
+    else:
+        path_value = str(value).strip()
+        if path_value:
+            prefs[key] = path_value
+        else:
+            prefs.pop(key, None)
+    save_preferences(prefs)
+
+
+def _get_int_preference(key: str, default: int, min_val: int, max_val: int) -> int:
+    """Generic integer preference getter with range validation."""
+    prefs = load_preferences()
+    value = prefs.get(key, default)
+    if isinstance(value, int) and min_val <= value <= max_val:
+        return value
+    return default
+
+
+def _set_int_preference(key: str, value: int, default: int, min_val: int, max_val: int):
+    """Generic integer preference setter with range validation."""
+    prefs = load_preferences()
+    if isinstance(value, int) and min_val <= value <= max_val:
+        prefs[key] = value
+    else:
+        prefs[key] = default
+    save_preferences(prefs)
 
 
 def get_preference(key: str, default=None):

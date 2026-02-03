@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..styles import load_qss, get_code_font
+from ..constants import Timing, CacheLimits
 from ..highlighter import YAMLHighlighter
 from ..template_engine import (
     parse_yaml, build_token_context, build_file_tree,
@@ -73,6 +74,10 @@ class MakeProjectWindow(QMainWindow):
         self._is_maximized = False
         self._last_valid_tree = None
 
+        # YAML parsing cache - reduces re-parsing overhead during preview updates
+        self._yaml_parse_cache = {}  # hash -> (data, error)
+        self._yaml_parse_cache_max_size = CacheLimits.YAML_PARSE_CACHE
+
         self._preview_timer = QTimer()
         self._preview_timer.setSingleShot(True)
         self._preview_timer.timeout.connect(self._update_preview)
@@ -89,7 +94,7 @@ class MakeProjectWindow(QMainWindow):
         self._yaml_history_pending = False
         self._yaml_history_timer = QTimer()
         self._yaml_history_timer.setSingleShot(True)
-        self._yaml_history_timer.setInterval(400)
+        self._yaml_history_timer.setInterval(Timing.HISTORY_COMMIT_MS)
         self._yaml_history_timer.timeout.connect(self._commit_yaml_history_entry)
 
         self._setup_window()
@@ -106,8 +111,8 @@ class MakeProjectWindow(QMainWindow):
         self.title_bar.dark_mode_toggle.update()
         self.title_bar.dark_mode_toggle.blockSignals(False)
 
-        QTimer.singleShot(0, self._restore_last_template)
-        QTimer.singleShot(2000, self._check_for_updates)
+        QTimer.singleShot(Timing.RESTORE_DELAY_MS, self._restore_last_template)
+        QTimer.singleShot(Timing.UPDATE_CHECK_DELAY_MS, self._check_for_updates)
 
     def _setup_window(self):
         """Configure frameless window with translucent background."""
@@ -178,6 +183,14 @@ class MakeProjectWindow(QMainWindow):
         self.redo_action.triggered.connect(self._redo)
         self.redo_action.setEnabled(False)
         edit_menu.addAction(self.redo_action)
+
+        edit_menu.addSeparator()
+
+        find_action = QAction("Find Template...", self)
+        find_action.setShortcut(QKeySequence.StandardKey.Find)
+        find_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        find_action.triggered.connect(self._focus_template_search)
+        edit_menu.addAction(find_action)
 
         help_menu = menubar.addMenu("Help")
 
@@ -411,6 +424,7 @@ class MakeProjectWindow(QMainWindow):
             self._on_file_template_delete_requested
         )
         self.file_templates_panel.templates_changed.connect(self._schedule_preview_update_without_animation)
+        self.file_templates_panel.generate_file_requested.connect(self._generate_file_from_template)
 
         self.custom_tokens_panel.tokens_changed.connect(self._schedule_preview_update_without_animation)
         self.custom_tokens_panel.token_action.connect(self._on_custom_token_action)
@@ -1252,6 +1266,11 @@ class MakeProjectWindow(QMainWindow):
         self.preview_panel.set_project_name(None)
         library.set_preference("last_template", None)
 
+    def _focus_template_search(self):
+        """Focus the template search box."""
+        self.project_templates_panel.search_box.setFocus()
+        self.project_templates_panel.search_box.selectAll()
+
     def _stash_current_project_template(self):
         """Cache unsaved YAML edits for the current template."""
         name = self.project_templates_panel.get_current_template_name()
@@ -1487,6 +1506,11 @@ class MakeProjectWindow(QMainWindow):
                     warnings.append((message, ref.line))
         return warnings
 
+    def _get_yaml_hash(self, text: str) -> str:
+        """Generate a fast hash for YAML content for cache keying."""
+        import hashlib
+        return hashlib.md5(text.encode('utf-8')).hexdigest()
+
     def _update_preview(self):
         """Refresh the preview panel based on YAML and details."""
         yaml_text = self.yaml_editor.toPlainText()
@@ -1505,7 +1529,23 @@ class MakeProjectWindow(QMainWindow):
         )
         extra_tokens = self.details_panel.get_custom_field_values(apply_defaults=True)
 
-        data, error = parse_yaml(yaml_text)
+        # Check YAML parse cache
+        yaml_hash = self._get_yaml_hash(yaml_text)
+        if yaml_hash in self._yaml_parse_cache:
+            # Cache hit - use cached parse result
+            data, error = self._yaml_parse_cache[yaml_hash]
+        else:
+            # Cache miss - parse and cache result
+            data, error = parse_yaml(yaml_text)
+
+            # Add to cache with LRU eviction
+            if len(self._yaml_parse_cache) >= self._yaml_parse_cache_max_size:
+                # Remove oldest entry (first inserted)
+                oldest_hash = next(iter(self._yaml_parse_cache))
+                del self._yaml_parse_cache[oldest_hash]
+
+            self._yaml_parse_cache[yaml_hash] = (data, error)
+
         if error:
             self.yaml_editor.set_error_line(self._extract_error_line(error))
             self.yaml_editor.set_warning_line(None)
@@ -1721,6 +1761,56 @@ class MakeProjectWindow(QMainWindow):
             self._show_status(f"Generated: {item_name}")
         elif message != "Generation cancelled.":
             QMessageBox.warning(self, "Error", message)
+
+    def _generate_file_from_template(self, template_name: str, content: str):
+        """Generate a file from a file template using current project details."""
+        from makeproject.template_engine import build_token_context, substitute_tokens
+        from PyQt6.QtWidgets import QFileDialog
+
+        # Build token context from current project details
+        context = build_token_context(
+            None,  # No YAML data for file templates
+            self.details_panel.get_title(),
+            "",
+            self.details_panel.get_custom_field_values(apply_defaults=True),
+            resolve_extra_tokens=True,
+        )
+
+        # Add filename token (defaults to template's filename)
+        filename = Path(template_name).name
+        context['filename'] = filename
+        context['filename'.lower()] = filename  # Case-insensitive alias
+
+        # Substitute tokens in the template
+        try:
+            generated_content = substitute_tokens(content, context)
+        except Exception as e:
+            QMessageBox.warning(self, "Template Error", f"Error processing template: {e}")
+            return
+
+        # Ask user where to save the file
+        suggested_name = Path(template_name).name  # Get filename without folder
+        output_file, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Generated File",
+            str(library.get_project_generation_dir() / suggested_name),
+            "All Files (*)"
+        )
+
+        if not output_file:
+            return
+
+        # Save the file
+        try:
+            Path(output_file).write_text(generated_content, encoding="utf-8")
+            self._show_status(f"Generated: {Path(output_file).name}")
+
+            # Open the file location
+            if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(output_file).parent))):
+                if sys.platform == "darwin":
+                    os.system(f'open -R "{output_file}"')
+        except Exception as e:
+            QMessageBox.warning(self, "Save Error", f"Failed to save file: {e}")
 
     def _prompt_file_conflict(self, path: Path, output_root: Path, is_folder: bool) -> str:
         """Prompt the user on file/folder conflicts during generation."""

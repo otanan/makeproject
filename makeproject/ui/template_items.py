@@ -114,6 +114,7 @@ class TemplateListItem(QWidget):
         self._editable = editable
         self._edit_finished = False
         self._auto_confirm_on_focus_out = auto_confirm_on_focus_out
+        self._tooltip_loaded = False  # Lazy tooltip loading flag
 
         layout = QHBoxLayout(self)
         # Controls the indentation of all items
@@ -160,6 +161,31 @@ class TemplateListItem(QWidget):
 
     def sizeHint(self):
         return QSize(super().sizeHint().width(), 28)
+
+    def enterEvent(self, event):
+        """Load tooltip lazily on first hover to avoid loading all templates during list refresh."""
+        if not self._tooltip_loaded and self._name:
+            self._tooltip_loaded = True
+            # Import here to avoid circular dependency
+            from .. import library
+            from ..template_engine import parse_template_metadata
+
+            content = library.load_project_template(self._name)
+            if content:
+                # Try to get description from metadata first
+                metadata = parse_template_metadata(content)
+                if metadata and metadata.description:
+                    self.setToolTip(metadata.description)
+                else:
+                    # Fall back to first comment line
+                    lines = content.splitlines()
+                    if lines:
+                        first_line = lines[0].strip()
+                        if first_line.startswith("#") and not first_line.lstrip().startswith("# ---"):
+                            tooltip = first_line.lstrip("#").strip()
+                            if tooltip:
+                                self.setToolTip(tooltip)
+        super().enterEvent(event)
 
     def mouseDoubleClickEvent(self, event):
         if not self._editable:

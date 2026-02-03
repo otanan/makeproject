@@ -6,6 +6,8 @@ import sys
 import subprocess
 from pathlib import Path, PurePosixPath
 
+from ..constants import Timing, Defaults, Dimensions
+
 from PyQt6.QtCore import (
     Qt, QSize, QPoint, pyqtSignal, QTimer, QPropertyAnimation,
     QEasingCurve, QUrl
@@ -146,16 +148,29 @@ class ProjectTemplatesPanel(QFrame):
         self._refresh_pending = False
         self._click_timer = QTimer()
         self._click_timer.setSingleShot(True)
-        self._click_timer.setInterval(250)
+        self._click_timer.setInterval(Timing.CLICK_DEBOUNCE_MS)
         self._pending_click_name = None
         self._mouse_click_in_progress = False
         self._mouse_clear_timer = QTimer()
         self._mouse_clear_timer.setSingleShot(True)
         self._mouse_clear_timer.timeout.connect(self._clear_mouse_click_flag)
-        
+
+        # Debounce timer for refresh operations
+        self._refresh_timer = QTimer()
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(Timing.REFRESH_DEBOUNCE_MS)
+        self._refresh_timer.timeout.connect(self._execute_refresh)
+
+        # Search filter state
+        self._search_filter = ""  # Current search text
+        self._search_timer = QTimer()
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(150)  # 150ms debounce for search
+        self._search_timer.timeout.connect(self.refresh_list)
+
         # Folder expansion states
         self._folder_expanded = {}
-        
+
         # Drag and drop state
         self._drag_start_pos = None
         self._drag_source_name = None
@@ -171,6 +186,14 @@ class ProjectTemplatesPanel(QFrame):
         header.setProperty("class", "panelHeader")
         header.setToolTip("Saved project template configurations")
         layout.addWidget(header)
+
+        # Search box for filtering templates
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("Search templates...")
+        self.search_box.setProperty("class", "searchBox")
+        self.search_box.textChanged.connect(self._on_search_text_changed)
+        self.search_box.installEventFilter(self)
+        layout.addWidget(self.search_box)
 
         self.template_list = QListWidget()
         self.template_list.setSpacing(0)
@@ -215,7 +238,14 @@ class ProjectTemplatesPanel(QFrame):
         return None
 
     def refresh_list(self):
-        """Refresh the template list from disk with folder support."""
+        """Refresh the template list from disk with folder support (debounced)."""
+        # Cancel any pending refresh and schedule a new one
+        if self._refresh_timer.isActive():
+            self._refresh_timer.stop()
+        self._refresh_timer.start()
+
+    def _execute_refresh(self):
+        """Execute the actual refresh logic (called after debounce)."""
         if self._refreshing:
             self._refresh_pending = True
             return
@@ -229,6 +259,20 @@ class ProjectTemplatesPanel(QFrame):
         unsaved_names = set(self._draft_store.keys())
         if self._has_unsaved_changes and self._current_template:
             unsaved_names.add(self._current_template)
+
+        # Apply search filter if active
+        if self._search_filter:
+            # Filter templates by name (case-insensitive substring match)
+            templates = [t for t in templates if self._search_filter in t.lower()]
+
+            # Filter folders to only show those containing matching templates
+            folders_with_matches = set()
+            for t in templates:
+                # Check if template is in a folder
+                if '/' in t:
+                    folder = t.split('/')[0]
+                    folders_with_matches.add(folder)
+            folders = [f for f in folders if f in folders_with_matches]
 
         # Track which templates are in folders
         templates_in_folders = set()
@@ -361,7 +405,7 @@ class ProjectTemplatesPanel(QFrame):
         self._refreshing = False
         if self._refresh_pending:
             self._refresh_pending = False
-            QTimer.singleShot(0, self.refresh_list)
+            QTimer.singleShot(0, self._execute_refresh)
 
     def _create_new_folder(self):
         """Create a new folder and show rename input."""
@@ -403,9 +447,7 @@ class ProjectTemplatesPanel(QFrame):
             widget = TemplateListItem(
                 display_name,
             )
-            tooltip = self._get_template_tooltip(name)
-            if tooltip:
-                widget.setToolTip(tooltip)
+            # Tooltip will be loaded lazily on hover (see TemplateListItem.enterEvent)
             # Ignore emitted display name; use full path captured from the list item.
             widget.rename_requested.connect(lambda _unused=None, n=name: self._start_rename_template(n))
             widget.delete_clicked.connect(lambda n=name: self._delete_template(n))
@@ -425,6 +467,13 @@ class ProjectTemplatesPanel(QFrame):
 
             if name == self._current_template:
                 self.template_list.setCurrentItem(item)
+
+    def _on_search_text_changed(self, text: str):
+        """Handle search box text changes (debounced)."""
+        self._search_filter = text.lower().strip()
+        if self._search_timer.isActive():
+            self._search_timer.stop()
+        self._search_timer.start()
 
     def _on_folder_toggled(self, folder: str, expanded: bool):
         """Handle folder expand/collapse."""
@@ -497,27 +546,52 @@ class ProjectTemplatesPanel(QFrame):
                 return candidate
             index += 1
 
-    def _get_template_tooltip(self, name: str) -> str | None:
-        content = library.load_project_template(name)
-        if not content:
-            return None
-        metadata = parse_template_metadata(content)
-        if metadata and metadata.description:
-            return metadata.description
-        lines = content.splitlines()
-        if not lines:
-            return None
-        first_line = lines[0].strip()
-        if not first_line.startswith("#") or first_line.lstrip().startswith("# ---"):
-            return None
-        return first_line.lstrip("#").strip() or None
-
     def eventFilter(self, obj, event):
-        """Handle keyboard and drag-drop events for template list."""
+        """Handle keyboard and drag-drop events for template list and search box."""
         from PyQt6.QtCore import QEvent, QMimeData
         from PyQt6.QtGui import QDrag
-        
-        if obj in (self.template_list, self.template_list.viewport()):
+
+        # Handle keyboard events in search box
+        if hasattr(self, 'search_box') and obj == self.search_box and event.type() == QEvent.Type.KeyPress:
+            key = event.key()
+
+            # Escape to clear search
+            if key == Qt.Key.Key_Escape:
+                self.search_box.clear()
+                return True
+
+            # Arrow keys to navigate template list
+            elif key == Qt.Key.Key_Down:
+                if self.template_list.count() > 0:
+                    current_row = self.template_list.currentRow()
+                    if current_row < 0:
+                        self.template_list.setCurrentRow(0)
+                    elif current_row < self.template_list.count() - 1:
+                        self.template_list.setCurrentRow(current_row + 1)
+                return True
+
+            elif key == Qt.Key.Key_Up:
+                if self.template_list.count() > 0:
+                    current_row = self.template_list.currentRow()
+                    if current_row < 0:
+                        self.template_list.setCurrentRow(0)
+                    elif current_row > 0:
+                        self.template_list.setCurrentRow(current_row - 1)
+                return True
+
+            # Enter/Return to select template and load it
+            elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                current = self.template_list.currentItem()
+                if current:
+                    item_type = current.data(ROLE_ITEM_TYPE)
+                    if item_type == "template":
+                        path = current.data(ROLE_ITEM_PATH)
+                        if path:
+                            # Trigger template loading
+                            self.template_list.itemDoubleClicked.emit(current)
+                return True
+
+        if hasattr(self, 'template_list') and obj in (self.template_list, self.template_list.viewport()):
             if event.type() == QEvent.Type.MouseButtonPress:
                 self._mouse_click_in_progress = True
                 if event.button() == Qt.MouseButton.LeftButton:
@@ -533,9 +607,11 @@ class ProjectTemplatesPanel(QFrame):
                         self._drag_source_name = None
                         
             elif event.type() == QEvent.Type.MouseMove:
-                if (self._drag_start_pos is not None 
-                    and self._drag_source_name is not None
-                    and event.buttons() & Qt.MouseButton.LeftButton):
+                if self._drag_start_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
+                    # If trying to drag a non-template item (e.g., folder), prevent drag
+                    if self._drag_source_name is None:
+                        return True
+                    # Only start drag for templates
                     distance = (event.position().toPoint() - self._drag_start_pos).manhattanLength()
                     if distance >= 10:  # Drag threshold
                         self._start_drag()
@@ -627,8 +703,8 @@ class ProjectTemplatesPanel(QFrame):
 
     def _start_drag(self):
         """Initiate a drag operation for a template."""
-        from PyQt6.QtCore import QMimeData
-        from PyQt6.QtGui import QDrag, QPixmap, QPainter, QFont
+        from PyQt6.QtCore import QMimeData, QRect
+        from PyQt6.QtGui import QDrag, QPixmap, QPainter
         
         if not self._drag_source_name:
             return
@@ -637,25 +713,44 @@ class ProjectTemplatesPanel(QFrame):
         mime_data = QMimeData()
         mime_data.setData("application/x-makeproject-template", self._drag_source_name.encode())
         drag.setMimeData(mime_data)
-        
-        # Create visual drag feedback
+
+        # Create enhanced visual drag feedback with shadow
         display_name = self._get_template_display_name(self._drag_source_name)
         font = self.template_list.font()
         metrics = self.template_list.fontMetrics()
-        text_width = metrics.horizontalAdvance(display_name) + 24
+
+        # Calculate dimensions
+        text_width = metrics.horizontalAdvance(display_name)
+        total_width = text_width + 24
         text_height = metrics.height() + 12
-        
-        pixmap = QPixmap(text_width, text_height)
-        pixmap.fill(QColor(26, 188, 157, 200))  # Teal with transparency
-        
+
+        # Create pixmap with extra space for shadow
+        pixmap = QPixmap(total_width + 4, text_height + 4)
+        pixmap.fill(Qt.GlobalColor.transparent)
+
         painter = QPainter(pixmap)
-        painter.setFont(font)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Draw shadow (offset by 2px)
+        shadow_rect = QRect(2, 2, total_width, text_height)
+        painter.setBrush(QColor(0, 0, 0, 60))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(shadow_rect, 6, 6)
+
+        # Draw main background
+        main_rect = QRect(0, 0, total_width, text_height)
+        painter.setBrush(QColor(26, 188, 157, 220))
+        painter.drawRoundedRect(main_rect, 4, 4)
+
+        # Draw text
         painter.setPen(QColor(255, 255, 255))
-        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, display_name)
+        painter.setFont(font)
+        text_rect = QRect(12, 0, text_width, text_height)
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, display_name)
         painter.end()
-        
+
         drag.setPixmap(pixmap)
-        drag.setHotSpot(QPoint(text_width // 2, text_height // 2))
+        drag.setHotSpot(QPoint(total_width // 2, text_height // 2))
         
         # Execute drag
         drag.exec(Qt.DropAction.MoveAction)
@@ -694,7 +789,17 @@ class ProjectTemplatesPanel(QFrame):
                 if self._current_template == source_name:
                     self._current_template = new_name
                     self.template_renamed.emit(source_name, new_name)
-            self.refresh_list()
+                self.refresh_list()
+                # Show success feedback on the target folder after refresh
+                def show_feedback():
+                    for i in range(self.template_list.count()):
+                        item = self.template_list.item(i)
+                        if item and item.data(ROLE_ITEM_PATH) == target_path:
+                            self._show_drop_success_feedback(item)
+                            break
+                QTimer.singleShot(50, show_feedback)
+            else:
+                self.refresh_list()
                 
         elif target_type == "template":
             # Drop onto template - create new folder containing both OR move out of folder
@@ -733,7 +838,28 @@ class ProjectTemplatesPanel(QFrame):
                     if self._current_template == source_name:
                         self._current_template = new_name
                         self.template_renamed.emit(source_name, new_name)
-                self.refresh_list()
+                    self.refresh_list()
+                    # Show success feedback on the target template after refresh
+                    def show_feedback():
+                        for i in range(self.template_list.count()):
+                            item = self.template_list.item(i)
+                            if item and item.data(ROLE_ITEM_PATH) == target_path:
+                                self._show_drop_success_feedback(item)
+                                break
+                    QTimer.singleShot(50, show_feedback)
+                else:
+                    self.refresh_list()
+
+    def _show_drop_success_feedback(self, item):
+        """Show a brief success flash after successful drop."""
+        if not item:
+            return
+        widget = self.template_list.itemWidget(item)
+        if widget:
+            original_style = widget.styleSheet()
+            # Flash success green
+            widget.setStyleSheet("background-color: rgba(76, 175, 80, 0.4); border-radius: 4px;")
+            QTimer.singleShot(200, lambda: widget.setStyleSheet(original_style))
 
     def _update_drag_hover(self, target_item):
         """Update the visual highlight for the current drag hover target."""
@@ -785,7 +911,7 @@ class ProjectTemplatesPanel(QFrame):
                     if item_path != source_folder:
                         widget = self.template_list.itemWidget(item)
                         if widget:
-                            widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.3); border-radius: 4px;")
+                            widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.15); border: 2px solid rgba(26, 188, 157, 1.0); border-radius: 4px;")
                             self._drag_hover_items.append(item)
                 elif item_type == "template":
                     # Only templates at root (not in any folder)
@@ -793,7 +919,7 @@ class ProjectTemplatesPanel(QFrame):
                     if item_folder is None:
                         widget = self.template_list.itemWidget(item)
                         if widget:
-                            widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.3); border-radius: 4px;")
+                            widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.15); border: 2px solid rgba(26, 188, 157, 1.0); border-radius: 4px;")
                             self._drag_hover_items.append(item)
         else:
             # Normal single-item highlight
@@ -1986,6 +2112,7 @@ class FileTemplatesPanel(QFrame):
     insert_reference = pyqtSignal(str)
     template_delete_requested = pyqtSignal(str)
     templates_changed = pyqtSignal()
+    generate_file_requested = pyqtSignal(str, str)  # Emits (template_name, content)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2004,16 +2131,29 @@ class FileTemplatesPanel(QFrame):
         self._refresh_pending = False
         self._click_timer = QTimer()
         self._click_timer.setSingleShot(True)
-        self._click_timer.setInterval(250)
+        self._click_timer.setInterval(Timing.CLICK_DEBOUNCE_MS)
         self._pending_click_name = None
         self._mouse_click_in_progress = False
         self._mouse_clear_timer = QTimer()
         self._mouse_clear_timer.setSingleShot(True)
         self._mouse_clear_timer.timeout.connect(self._clear_mouse_click_flag)
-        
+
+        # Debounce timer for refresh operations
+        self._refresh_timer = QTimer()
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(Timing.REFRESH_DEBOUNCE_MS)
+        self._refresh_timer.timeout.connect(self._execute_refresh)
+
+        # Search filter state
+        self._search_filter = ""  # Current search text
+        self._search_timer = QTimer()
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(150)  # 150ms debounce for search
+        self._search_timer.timeout.connect(self.refresh_list)
+
         # Folder expansion states
         self._folder_expanded = {}
-        
+
         # Drag and drop state
         self._drag_start_pos = None
         self._drag_source_name = None
@@ -2035,6 +2175,14 @@ class FileTemplatesPanel(QFrame):
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 8, 0)
         left_layout.setSpacing(8)
+
+        # Search box for filtering templates
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("Search templates...")
+        self.search_box.setProperty("class", "searchBox")
+        self.search_box.textChanged.connect(self._on_search_text_changed)
+        self.search_box.installEventFilter(self)
+        left_layout.addWidget(self.search_box)
 
         self.template_list = QListWidget()
         self.template_list.setMinimumWidth(140)
@@ -2111,18 +2259,39 @@ class FileTemplatesPanel(QFrame):
         return None
 
     def refresh_list(self):
-        """Refresh the template list from disk with folder support."""
+        """Refresh the template list from disk with folder support (debounced)."""
+        # Cancel any pending refresh and schedule a new one
+        if self._refresh_timer.isActive():
+            self._refresh_timer.stop()
+        self._refresh_timer.start()
+
+    def _execute_refresh(self):
+        """Execute the actual refresh logic (called after debounce)."""
         if self._refreshing:
             self._refresh_pending = True
             return
         self._refreshing = True
         self.template_list.clear()
-        
+
         template_names = library.list_file_template_names()
         folders = library.list_file_template_folders()
         unsaved_names = set(self._drafts.keys())
         if self._has_unsaved_changes and self._current_template:
             unsaved_names.add(self._current_template)
+
+        # Apply search filter if active
+        if self._search_filter:
+            # Filter templates by name (case-insensitive substring match)
+            template_names = [t for t in template_names if self._search_filter in t.lower()]
+
+            # Filter folders to only show those containing matching templates
+            folders_with_matches = set()
+            for t in template_names:
+                # Check if template is in a folder
+                if '/' in t:
+                    folder = t.split('/')[0]
+                    folders_with_matches.add(folder)
+            folders = [f for f in folders if f in folders_with_matches]
 
         # Track which templates are in folders
         templates_in_folders = set()
@@ -2235,7 +2404,7 @@ class FileTemplatesPanel(QFrame):
         self._refreshing = False
         if self._refresh_pending:
             self._refresh_pending = False
-            QTimer.singleShot(0, self.refresh_list)
+            QTimer.singleShot(0, self._execute_refresh)
 
     def _create_new_folder(self):
         """Create a new folder and show rename input."""
@@ -2298,6 +2467,13 @@ class FileTemplatesPanel(QFrame):
 
             if name == self._current_template:
                 self.template_list.setCurrentItem(item)
+
+    def _on_search_text_changed(self, text: str):
+        """Handle search box text changes (debounced)."""
+        self._search_filter = text.lower().strip()
+        if self._search_timer.isActive():
+            self._search_timer.stop()
+        self._search_timer.start()
 
     def _on_folder_toggled(self, folder: str, expanded: bool):
         """Handle folder expand/collapse."""
@@ -2389,8 +2565,48 @@ class FileTemplatesPanel(QFrame):
     def eventFilter(self, obj, event):
         from PyQt6.QtCore import QEvent, QMimeData
         from PyQt6.QtGui import QDrag
-        
-        if obj in (self.template_list, self.template_list.viewport()):
+
+        # Handle keyboard events in search box
+        if hasattr(self, 'search_box') and obj == self.search_box and event.type() == QEvent.Type.KeyPress:
+            key = event.key()
+
+            # Escape to clear search
+            if key == Qt.Key.Key_Escape:
+                self.search_box.clear()
+                return True
+
+            # Arrow keys to navigate template list
+            elif key == Qt.Key.Key_Down:
+                if self.template_list.count() > 0:
+                    current_row = self.template_list.currentRow()
+                    if current_row < 0:
+                        self.template_list.setCurrentRow(0)
+                    elif current_row < self.template_list.count() - 1:
+                        self.template_list.setCurrentRow(current_row + 1)
+                return True
+
+            elif key == Qt.Key.Key_Up:
+                if self.template_list.count() > 0:
+                    current_row = self.template_list.currentRow()
+                    if current_row < 0:
+                        self.template_list.setCurrentRow(0)
+                    elif current_row > 0:
+                        self.template_list.setCurrentRow(current_row - 1)
+                return True
+
+            # Enter/Return to select template and load it
+            elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                current = self.template_list.currentItem()
+                if current:
+                    item_type = current.data(ROLE_ITEM_TYPE)
+                    if item_type == "template":
+                        path = current.data(ROLE_ITEM_PATH)
+                        if path:
+                            # Trigger template loading
+                            self.template_list.itemDoubleClicked.emit(current)
+                return True
+
+        if hasattr(self, 'template_list') and obj in (self.template_list, self.template_list.viewport()):
             if event.type() == QEvent.Type.MouseButtonPress:
                 self._mouse_click_in_progress = True
                 if event.button() == Qt.MouseButton.LeftButton:
@@ -2406,9 +2622,11 @@ class FileTemplatesPanel(QFrame):
                         self._drag_source_name = None
                         
             elif event.type() == QEvent.Type.MouseMove:
-                if (self._drag_start_pos is not None 
-                    and self._drag_source_name is not None
-                    and event.buttons() & Qt.MouseButton.LeftButton):
+                if self._drag_start_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
+                    # If trying to drag a non-template item (e.g., folder), prevent drag
+                    if self._drag_source_name is None:
+                        return True
+                    # Only start drag for templates
                     distance = (event.position().toPoint() - self._drag_start_pos).manhattanLength()
                     if distance >= 10:  # Drag threshold
                         self._start_drag()
@@ -2507,25 +2725,44 @@ class FileTemplatesPanel(QFrame):
         mime_data = QMimeData()
         mime_data.setData("application/x-makeproject-filetemplate", self._drag_source_name.encode())
         drag.setMimeData(mime_data)
-        
-        # Create visual drag feedback
+
+        # Create enhanced visual drag feedback with shadow
         display_name = self._get_template_display_name(self._drag_source_name)
         font = self.template_list.font()
         metrics = self.template_list.fontMetrics()
-        text_width = metrics.horizontalAdvance(display_name) + 24
+
+        # Calculate dimensions
+        text_width = metrics.horizontalAdvance(display_name)
+        total_width = text_width + 24
         text_height = metrics.height() + 12
-        
-        pixmap = QPixmap(text_width, text_height)
-        pixmap.fill(QColor(26, 188, 157, 200))  # Teal with transparency
-        
+
+        # Create pixmap with extra space for shadow
+        pixmap = QPixmap(total_width + 4, text_height + 4)
+        pixmap.fill(Qt.GlobalColor.transparent)
+
         painter = QPainter(pixmap)
-        painter.setFont(font)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Draw shadow (offset by 2px)
+        shadow_rect = QRect(2, 2, total_width, text_height)
+        painter.setBrush(QColor(0, 0, 0, 60))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(shadow_rect, 6, 6)
+
+        # Draw main background
+        main_rect = QRect(0, 0, total_width, text_height)
+        painter.setBrush(QColor(26, 188, 157, 220))
+        painter.drawRoundedRect(main_rect, 4, 4)
+
+        # Draw text
         painter.setPen(QColor(255, 255, 255))
-        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, display_name)
+        painter.setFont(font)
+        text_rect = QRect(12, 0, text_width, text_height)
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, display_name)
         painter.end()
-        
+
         drag.setPixmap(pixmap)
-        drag.setHotSpot(QPoint(text_width // 2, text_height // 2))
+        drag.setHotSpot(QPoint(total_width // 2, text_height // 2))
         
         # Execute drag
         drag.exec(Qt.DropAction.MoveAction)
@@ -2565,7 +2802,17 @@ class FileTemplatesPanel(QFrame):
                     self._current_template = new_name
                     self.reference_label.setText(f"Reference: template: {self._current_template}")
                 self.templates_changed.emit()
-            self.refresh_list()
+                self.refresh_list()
+                # Show success feedback on the target folder after refresh
+                def show_feedback():
+                    for i in range(self.template_list.count()):
+                        item = self.template_list.item(i)
+                        if item and item.data(ROLE_ITEM_PATH) == target_path:
+                            self._show_drop_success_feedback(item)
+                            break
+                QTimer.singleShot(50, show_feedback)
+            else:
+                self.refresh_list()
                 
         elif target_type == "template":
             # Drop onto template - create new folder containing both OR move out of folder
@@ -2606,7 +2853,28 @@ class FileTemplatesPanel(QFrame):
                         self._current_template = new_name
                         self.reference_label.setText(f"Reference: template: {self._current_template}")
                     self.templates_changed.emit()
-                self.refresh_list()
+                    self.refresh_list()
+                    # Show success feedback on the target template after refresh
+                    def show_feedback():
+                        for i in range(self.template_list.count()):
+                            item = self.template_list.item(i)
+                            if item and item.data(ROLE_ITEM_PATH) == target_path:
+                                self._show_drop_success_feedback(item)
+                                break
+                    QTimer.singleShot(50, show_feedback)
+                else:
+                    self.refresh_list()
+
+    def _show_drop_success_feedback(self, item):
+        """Show a brief success flash after successful drop."""
+        if not item:
+            return
+        widget = self.template_list.itemWidget(item)
+        if widget:
+            original_style = widget.styleSheet()
+            # Flash success green
+            widget.setStyleSheet("background-color: rgba(76, 175, 80, 0.4); border-radius: 4px;")
+            QTimer.singleShot(200, lambda: widget.setStyleSheet(original_style))
 
     def _update_drag_hover(self, target_item):
         """Update the visual highlight for the current drag hover target."""
@@ -2658,7 +2926,7 @@ class FileTemplatesPanel(QFrame):
                     if item_path != source_folder:
                         widget = self.template_list.itemWidget(item)
                         if widget:
-                            widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.3); border-radius: 4px;")
+                            widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.15); border: 2px solid rgba(26, 188, 157, 1.0); border-radius: 4px;")
                             self._drag_hover_items.append(item)
                 elif item_type == "template":
                     # Only templates at root (not in any folder)
@@ -2666,7 +2934,7 @@ class FileTemplatesPanel(QFrame):
                     if item_folder is None:
                         widget = self.template_list.itemWidget(item)
                         if widget:
-                            widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.3); border-radius: 4px;")
+                            widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.15); border: 2px solid rgba(26, 188, 157, 1.0); border-radius: 4px;")
                             self._drag_hover_items.append(item)
         else:
             # Normal single-item highlight
@@ -2768,7 +3036,9 @@ class FileTemplatesPanel(QFrame):
         menu = QMenu(self)
         rename_action = menu.addAction("Rename")
         duplicate_action = menu.addAction("Duplicate")
-        
+        generate_action = menu.addAction("Generate this file")
+        menu.addSeparator()
+
         # Add move options
         folder = self._get_template_folder(item_path)
         folders = library.list_file_template_folders()
@@ -2793,6 +3063,8 @@ class FileTemplatesPanel(QFrame):
             self._start_rename_template(item_path)
         elif action == duplicate_action:
             self._duplicate_template(item_path)
+        elif action == generate_action:
+            self._generate_file_from_template(item_path, content)
         elif action == show_action:
             self._show_in_finder(item_path)
         elif action == delete_action:
@@ -2838,6 +3110,10 @@ class FileTemplatesPanel(QFrame):
         self.reference_label.setText(f"Reference: template: {new_name}")
         self.refresh_list()
         self.templates_changed.emit()
+
+    def _generate_file_from_template(self, name: str, content: str):
+        """Request file generation from this template."""
+        self.generate_file_requested.emit(name, content)
 
     def _show_in_finder(self, name: str):
         path = None
@@ -3205,7 +3481,7 @@ class CustomTokensPanel(QFrame):
         self._refresh_pending = False
         self._click_timer = QTimer()
         self._click_timer.setSingleShot(True)
-        self._click_timer.setInterval(250)
+        self._click_timer.setInterval(Timing.CLICK_DEBOUNCE_MS)
         self._pending_click_name = None
         self._mouse_click_in_progress = False
         self._mouse_clear_timer = QTimer()
@@ -3446,7 +3722,7 @@ result = "-".join(words)
         self._refreshing = False
         if self._refresh_pending:
             self._refresh_pending = False
-            QTimer.singleShot(0, self.refresh_list)
+            QTimer.singleShot(0, self._execute_refresh)
 
     def _clear_mouse_click_flag(self):
         self._mouse_click_in_progress = False
