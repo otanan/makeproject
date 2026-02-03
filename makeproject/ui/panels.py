@@ -194,6 +194,11 @@ class ProjectTemplatesPanel(QFrame):
 
         self.refresh_list()
 
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        """Normalize line endings for stable comparisons."""
+        return text.replace("\r\n", "\n").replace("\r", "\n")
+
     def _get_folder_display_name(self, folder: str) -> str:
         """Get display name for a folder (last component of path)."""
         return Path(folder).name
@@ -1208,14 +1213,14 @@ class ProjectTemplatesPanel(QFrame):
 
     def set_current_template(self, name: str, content: str = ""):
         self._current_template = name
-        self._original_content = content
+        self._original_content = self._normalize_text(content)
         self._has_unsaved_changes = False
         self._editing_new = False
         self.refresh_list()
 
     def mark_unsaved_changes(self, current_content: str):
         """Update the unsaved indicator based on editor content."""
-        has_changes = current_content != self._original_content
+        has_changes = self._normalize_text(current_content) != self._original_content
         if has_changes != self._has_unsaved_changes:
             self._has_unsaved_changes = has_changes
             self.refresh_list()
@@ -1223,7 +1228,7 @@ class ProjectTemplatesPanel(QFrame):
     def mark_saved(self, name: str, content: str):
         """Mark the current template as saved."""
         self._current_template = name
-        self._original_content = content
+        self._original_content = self._normalize_text(content)
         self._has_unsaved_changes = False
         self._editing_new = False
         self.refresh_list()
@@ -1242,6 +1247,10 @@ class ProjectTemplatesPanel(QFrame):
 
     def has_unsaved_changes(self) -> bool:
         return self._has_unsaved_changes
+
+    def get_original_content(self) -> str:
+        """Return the saved content used for dirty checks."""
+        return self._original_content
 
     def get_current_template_name(self) -> str:
         return self._current_template or ""

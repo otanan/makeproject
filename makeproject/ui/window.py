@@ -568,6 +568,11 @@ class MakeProjectWindow(QMainWindow):
             self._suppress_yaml_animation = was_suppressed
         self._reset_yaml_history()
 
+    @staticmethod
+    def _normalize_yaml_text(text: str) -> str:
+        """Normalize line endings to avoid false dirty states."""
+        return text.replace("\r\n", "\n").replace("\r", "\n")
+
     def _push_history_action(self, action: HistoryAction):
         """Append a history action and update undo/redo state."""
         if self._history_suspended:
@@ -1252,8 +1257,8 @@ class MakeProjectWindow(QMainWindow):
         name = self.project_templates_panel.get_current_template_name()
         if not name:
             return
-        content = self.yaml_editor.toPlainText()
-        saved = library.load_project_template(name) or ""
+        content = self._normalize_yaml_text(self.yaml_editor.toPlainText())
+        saved = self._normalize_yaml_text(self.project_templates_panel.get_original_content())
         if content != saved:
             self._project_template_drafts[name] = content
         else:
@@ -1285,16 +1290,22 @@ class MakeProjectWindow(QMainWindow):
         """Load a project template into the editor and details panel."""
         self._stash_current_project_template()
         content = library.load_project_template(name)
-        if content:
-            draft = self._project_template_drafts.get(name)
-            editor_content = draft if draft is not None else content
-            self.project_templates_panel.set_current_template(name, content)
-            self._set_yaml_text(editor_content, block_signals=True)
-            self.project_templates_panel.mark_unsaved_changes(editor_content)
-            self._schedule_preview_update_without_animation()
-            self.preview_panel.set_project_name(name)
-            self._show_status(f"Loaded: {name}")
-            library.set_preference("last_template", name)
+        if content is None:
+            return
+        normalized_content = self._normalize_yaml_text(content)
+        draft = self._project_template_drafts.get(name)
+        editor_content = draft if draft is not None else normalized_content
+        self._set_yaml_text(editor_content, block_signals=True)
+        if draft is None:
+            original_content = self._normalize_yaml_text(self.yaml_editor.toPlainText())
+        else:
+            original_content = normalized_content
+        self.project_templates_panel.set_current_template(name, original_content)
+        self.project_templates_panel.mark_unsaved_changes(editor_content)
+        self._schedule_preview_update_without_animation()
+        self.preview_panel.set_project_name(name)
+        self._show_status(f"Loaded: {name}")
+        library.set_preference("last_template", name)
 
     def _insert_template_reference(self, template_name: str):
         """Insert a file template reference at the current YAML cursor."""
