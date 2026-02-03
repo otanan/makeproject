@@ -2,7 +2,7 @@
 Update dialog UI for MakeProject.
 """
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
     QLabel,
@@ -10,9 +10,11 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QProgressBar,
     QPushButton,
+    QWidget,
 )
 
 from .dialog_utils import style_default_dialog_button
+from .title_bar import DialogTitleBar
 
 class UpdateDialog(QDialog):
     """Update prompt dialog that hosts progress and status updates."""
@@ -21,10 +23,20 @@ class UpdateDialog(QDialog):
 
     def __init__(self, version: str, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Update Available")
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setModal(True)
+        self.setMinimumWidth(450)
 
         self._is_updating = False
+
+        # Container widget that will receive QDialog styling
+        container = QWidget()
+        container.setObjectName("dialogContainer")
+
+        # Create custom title bar
+        title_bar = DialogTitleBar("Update Available", container)
+        title_bar.close_clicked.connect(self.reject)
 
         self.message_label = QLabel(
             f"A new version ({version}) is available. Download and install?"
@@ -52,12 +64,25 @@ class UpdateDialog(QDialog):
         buttons_layout.addWidget(self.update_button)
         buttons_layout.addWidget(self.cancel_button)
 
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+        container_layout.addWidget(title_bar)
+
+        # Content area with margins
+        content = QVBoxLayout()
+        content.setContentsMargins(20, 16, 20, 16)
+        content.setSpacing(12)
+        content.addWidget(self.message_label)
+        content.addLayout(progress_layout)
+        content.addLayout(buttons_layout)
+
+        container_layout.addLayout(content)
+
+        # Dialog layout contains only the container
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(12)
-        layout.addWidget(self.message_label)
-        layout.addLayout(progress_layout)
-        layout.addLayout(buttons_layout)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(container)
 
         self.update_button.clicked.connect(self._on_update_clicked)
         self.cancel_button.clicked.connect(self.reject)

@@ -49,7 +49,7 @@ from .update_dialog import UpdateDialog
 from .template_paths_dialog import TemplatePathsDialog
 from .unsaved_changes_dialog import UnsavedChangesDialog
 from .empty_title_dialog import EmptyTitleDialog
-from .dialog_utils import style_default_dialog_button
+from .file_conflict_dialog import FileConflictDialog
 
 
 @dataclass
@@ -257,11 +257,13 @@ class MakeProjectWindow(QMainWindow):
         main_splitter.setCollapsible(0, False)
 
         center_splitter = QSplitter(Qt.Orientation.Vertical)
+        center_splitter.setMinimumWidth(300)  # Prevent center section from being hidden
         self._center_splitter = center_splitter
 
         yaml_panel = QFrame()
         yaml_panel.setObjectName("projectYamlPanel")
         yaml_panel.setProperty("class", "panel")
+        yaml_panel.setMinimumHeight(150)  # Prevent panel from being hidden
         yaml_layout = QVBoxLayout(yaml_panel)
         yaml_layout.setContentsMargins(12, 12, 12, 12)
         yaml_layout.setSpacing(8)
@@ -282,8 +284,10 @@ class MakeProjectWindow(QMainWindow):
         yaml_layout.addWidget(self.yaml_editor)
 
         center_splitter.addWidget(yaml_panel)
+        center_splitter.setCollapsible(0, False)  # Prevent YAML panel from collapsing
 
         bottom_container = QWidget()
+        bottom_container.setMinimumHeight(200)  # Prevent panel from being hidden
         bottom_layout = QVBoxLayout(bottom_container)
         bottom_layout.setContentsMargins(0, 0, 0, 0)
         bottom_layout.setSpacing(6)
@@ -299,11 +303,13 @@ class MakeProjectWindow(QMainWindow):
         bottom_layout.addWidget(self.bottom_stack, 1)
 
         center_splitter.addWidget(bottom_container)
+        center_splitter.setCollapsible(1, False)  # Prevent bottom panel from collapsing
         center_splitter.setSizes([350, 300])
 
         main_splitter.addWidget(center_splitter)
 
         right_container = QWidget()
+        right_container.setMinimumWidth(250)  # Prevent right panel from being hidden
         right_layout = QVBoxLayout(right_container)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(12)
@@ -1625,16 +1631,16 @@ class MakeProjectWindow(QMainWindow):
             if total > 0:
                 self.progress_bar.setValue(int((current / total) * 100))
 
-        overwrite_all = False
+        apply_to_all_choice = None
 
         def on_conflict(path: Path, output_root: Path, is_folder: bool):
-            nonlocal overwrite_all
-            if overwrite_all:
-                return "overwrite"
+            nonlocal apply_to_all_choice
+            if apply_to_all_choice:
+                return apply_to_all_choice
             decision = self._prompt_file_conflict(path, output_root, is_folder)
-            if decision == "overwrite_all":
-                overwrite_all = True
-                return "overwrite"
+            if decision.endswith("_all"):
+                apply_to_all_choice = decision.replace("_all", "")
+                return apply_to_all_choice
             return decision
 
         self.progress_bar.setVisible(True)
@@ -1730,16 +1736,16 @@ class MakeProjectWindow(QMainWindow):
             if total > 0:
                 self.progress_bar.setValue(int((current / total) * 100))
 
-        overwrite_all = False
+        apply_to_all_choice = None
 
         def on_conflict(path: Path, output_root: Path, is_folder: bool):
-            nonlocal overwrite_all
-            if overwrite_all:
-                return "overwrite"
+            nonlocal apply_to_all_choice
+            if apply_to_all_choice:
+                return apply_to_all_choice
             decision = self._prompt_file_conflict(path, output_root, is_folder)
-            if decision == "overwrite_all":
-                overwrite_all = True
-                return "overwrite"
+            if decision.endswith("_all"):
+                apply_to_all_choice = decision.replace("_all", "")
+                return apply_to_all_choice
             return decision
 
         self.progress_bar.setVisible(True)
@@ -1819,59 +1825,11 @@ class MakeProjectWindow(QMainWindow):
         except ValueError:
             display_path = str(path)
 
-        dialog = QMessageBox(self)
-        dialog.setIcon(QMessageBox.Icon.Question)
-        if is_folder:
-            dialog.setWindowTitle("Folder Conflict")
-            dialog.setText(f"\"{display_path}\" already exists.")
-            dialog.setInformativeText("Choose what to do with this folder.")
-
-            overwrite_btn = dialog.addButton("Overwrite", QMessageBox.ButtonRole.DestructiveRole)
-            overwrite_all_btn = dialog.addButton("Overwrite All", QMessageBox.ButtonRole.DestructiveRole)
-            merge_btn = dialog.addButton("Merge", QMessageBox.ButtonRole.AcceptRole)
-            skip_btn = dialog.addButton("Skip", QMessageBox.ButtonRole.RejectRole)
-            cancel_btn = dialog.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-            overwrite_btn.setProperty("class", "dangerButton")
-            overwrite_all_btn.setProperty("class", "dangerButton")
-            style_default_dialog_button(merge_btn)
-            skip_btn.setProperty("class", "cancelButton")
-            cancel_btn.setProperty("class", "cancelButton")
-            dialog.setDefaultButton(merge_btn)
-        else:
-            dialog.setWindowTitle("File Conflict")
-            dialog.setText(f"\"{display_path}\" already exists.")
-            dialog.setInformativeText("Choose what to do with this file.")
-
-            overwrite_btn = dialog.addButton("Overwrite", QMessageBox.ButtonRole.DestructiveRole)
-            overwrite_all_btn = dialog.addButton("Overwrite All", QMessageBox.ButtonRole.DestructiveRole)
-            keep_btn = dialog.addButton("Keep Both", QMessageBox.ButtonRole.AcceptRole)
-            cancel_btn = dialog.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-            overwrite_btn.setProperty("class", "dangerButton")
-            overwrite_all_btn.setProperty("class", "dangerButton")
-            style_default_dialog_button(keep_btn)
-            cancel_btn.setProperty("class", "cancelButton")
-            dialog.setDefaultButton(keep_btn)
-
-        dialog.exec()
-        clicked = dialog.clickedButton()
-        if is_folder:
-            if clicked == cancel_btn:
-                return "cancel"
-            if clicked == skip_btn:
-                return "skip"
-            if clicked == merge_btn:
-                return "merge"
-            if clicked == overwrite_all_btn:
-                return "overwrite_all"
-            return "overwrite"
-
-        if clicked == cancel_btn:
-            return "cancel"
-        if clicked == keep_btn:
-            return "keep"
-        if clicked == overwrite_all_btn:
-            return "overwrite_all"
-        return "overwrite"
+        dialog = FileConflictDialog(display_path, is_folder, self)
+        result = dialog.exec()
+        if result == QDialog.DialogCode.Accepted:
+            return dialog.choice
+        return "cancel"
 
     def _check_for_updates(self, manual=False):
         """Check for updates from GitHub."""

@@ -28,8 +28,8 @@ from ..highlighter import PythonHighlighter
 from ..widgets import ToggleSwitch
 from ..template_engine import parse_template_metadata
 from .editors import CodeEditor
-from .dialog_utils import style_default_dialog_button
 from .delete_confirmation_dialog import DeleteConfirmationDialog, DeleteFolderConfirmationDialog
+from .name_conflict_dialog import NameConflictDialog
 from .template_items import TemplateListItem, AddTemplateButton, FolderListItem
 
 
@@ -855,11 +855,23 @@ class ProjectTemplatesPanel(QFrame):
         if not item:
             return
         widget = self.template_list.itemWidget(item)
-        if widget:
-            original_style = widget.styleSheet()
-            # Flash success green
-            widget.setStyleSheet("background-color: rgba(76, 175, 80, 0.4); border-radius: 4px;")
-            QTimer.singleShot(200, lambda: widget.setStyleSheet(original_style))
+        if not widget:
+            return
+
+        original_style = widget.styleSheet()
+        # Flash success green
+        widget.setStyleSheet("background-color: rgba(76, 175, 80, 0.4); border-radius: 4px;")
+
+        # Safely restore style, checking if widget still exists
+        def restore_style():
+            try:
+                if widget and not widget.isHidden():
+                    widget.setStyleSheet(original_style)
+            except RuntimeError:
+                # Widget was deleted, ignore
+                pass
+
+        QTimer.singleShot(200, restore_style)
 
     def _update_drag_hover(self, target_item):
         """Update the visual highlight for the current drag hover target."""
@@ -911,7 +923,7 @@ class ProjectTemplatesPanel(QFrame):
                     if item_path != source_folder:
                         widget = self.template_list.itemWidget(item)
                         if widget:
-                            widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.15); border: 2px solid rgba(26, 188, 157, 1.0); border-radius: 4px;")
+                            widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.15); border-radius: 4px;")
                             self._drag_hover_items.append(item)
                 elif item_type == "template":
                     # Only templates at root (not in any folder)
@@ -919,7 +931,7 @@ class ProjectTemplatesPanel(QFrame):
                     if item_folder is None:
                         widget = self.template_list.itemWidget(item)
                         if widget:
-                            widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.15); border: 2px solid rgba(26, 188, 157, 1.0); border-radius: 4px;")
+                            widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.15); border-radius: 4px;")
                             self._drag_hover_items.append(item)
         else:
             # Normal single-item highlight
@@ -1262,25 +1274,11 @@ class ProjectTemplatesPanel(QFrame):
         return name
 
     def _prompt_template_name_conflict(self, name: str) -> str:
-        dialog = QMessageBox(self)
-        dialog.setIcon(QMessageBox.Icon.Question)
-        dialog.setWindowTitle("Template Exists")
-        dialog.setText(f"\"{name}\" already exists.")
-        dialog.setInformativeText("Choose what to do with this template.")
-        overwrite_btn = dialog.addButton("Overwrite", QMessageBox.ButtonRole.DestructiveRole)
-        keep_btn = dialog.addButton("Keep Both", QMessageBox.ButtonRole.AcceptRole)
-        cancel_btn = dialog.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        overwrite_btn.setProperty("class", "dangerButton")
-        style_default_dialog_button(keep_btn)
-        cancel_btn.setProperty("class", "cancelButton")
-        dialog.setDefaultButton(keep_btn)
-        dialog.exec()
-        clicked = dialog.clickedButton()
-        if clicked == cancel_btn:
-            return "cancel"
-        if clicked == keep_btn:
-            return "keep"
-        return "overwrite"
+        dialog = NameConflictDialog(name, "Template", self)
+        result = dialog.exec()
+        if result == QDialog.DialogCode.Accepted:
+            return dialog.choice
+        return "cancel"
 
     def _delete_template(self, name: str):
         """Delete a template with confirmation dialog and slide animation."""
@@ -2870,11 +2868,23 @@ class FileTemplatesPanel(QFrame):
         if not item:
             return
         widget = self.template_list.itemWidget(item)
-        if widget:
-            original_style = widget.styleSheet()
-            # Flash success green
-            widget.setStyleSheet("background-color: rgba(76, 175, 80, 0.4); border-radius: 4px;")
-            QTimer.singleShot(200, lambda: widget.setStyleSheet(original_style))
+        if not widget:
+            return
+
+        original_style = widget.styleSheet()
+        # Flash success green
+        widget.setStyleSheet("background-color: rgba(76, 175, 80, 0.4); border-radius: 4px;")
+
+        # Safely restore style, checking if widget still exists
+        def restore_style():
+            try:
+                if widget and not widget.isHidden():
+                    widget.setStyleSheet(original_style)
+            except RuntimeError:
+                # Widget was deleted, ignore
+                pass
+
+        QTimer.singleShot(200, restore_style)
 
     def _update_drag_hover(self, target_item):
         """Update the visual highlight for the current drag hover target."""
@@ -2926,7 +2936,7 @@ class FileTemplatesPanel(QFrame):
                     if item_path != source_folder:
                         widget = self.template_list.itemWidget(item)
                         if widget:
-                            widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.15); border: 2px solid rgba(26, 188, 157, 1.0); border-radius: 4px;")
+                            widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.15); border-radius: 4px;")
                             self._drag_hover_items.append(item)
                 elif item_type == "template":
                     # Only templates at root (not in any folder)
@@ -2934,7 +2944,7 @@ class FileTemplatesPanel(QFrame):
                     if item_folder is None:
                         widget = self.template_list.itemWidget(item)
                         if widget:
-                            widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.15); border: 2px solid rgba(26, 188, 157, 1.0); border-radius: 4px;")
+                            widget.setStyleSheet("background-color: rgba(26, 188, 157, 0.15); border-radius: 4px;")
                             self._drag_hover_items.append(item)
         else:
             # Normal single-item highlight
@@ -3290,25 +3300,11 @@ class FileTemplatesPanel(QFrame):
             index += 1
 
     def _prompt_template_name_conflict(self, name: str) -> str:
-        dialog = QMessageBox(self)
-        dialog.setIcon(QMessageBox.Icon.Question)
-        dialog.setWindowTitle("Template Exists")
-        dialog.setText(f"\"{name}\" already exists.")
-        dialog.setInformativeText("Choose what to do with this template.")
-        overwrite_btn = dialog.addButton("Overwrite", QMessageBox.ButtonRole.DestructiveRole)
-        keep_btn = dialog.addButton("Keep Both", QMessageBox.ButtonRole.AcceptRole)
-        cancel_btn = dialog.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        overwrite_btn.setProperty("class", "dangerButton")
-        style_default_dialog_button(keep_btn)
-        cancel_btn.setProperty("class", "cancelButton")
-        dialog.setDefaultButton(keep_btn)
-        dialog.exec()
-        clicked = dialog.clickedButton()
-        if clicked == cancel_btn:
-            return "cancel"
-        if clicked == keep_btn:
-            return "keep"
-        return "overwrite"
+        dialog = NameConflictDialog(name, "Template", self)
+        result = dialog.exec()
+        if result == QDialog.DialogCode.Accepted:
+            return dialog.choice
+        return "cancel"
 
     def _track_unsaved_changes(self):
         content = self.editor.toPlainText()
@@ -3948,25 +3944,11 @@ result = "-".join(words)
         return candidate
 
     def _prompt_token_name_conflict(self, name: str) -> str:
-        dialog = QMessageBox(self)
-        dialog.setIcon(QMessageBox.Icon.Question)
-        dialog.setWindowTitle("Token Exists")
-        dialog.setText(f"\"{name}\" already exists.")
-        dialog.setInformativeText("Choose what to do with this token.")
-        overwrite_btn = dialog.addButton("Overwrite", QMessageBox.ButtonRole.DestructiveRole)
-        keep_btn = dialog.addButton("Keep Both", QMessageBox.ButtonRole.AcceptRole)
-        cancel_btn = dialog.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        overwrite_btn.setProperty("class", "dangerButton")
-        style_default_dialog_button(keep_btn)
-        cancel_btn.setProperty("class", "cancelButton")
-        dialog.setDefaultButton(keep_btn)
-        dialog.exec()
-        clicked = dialog.clickedButton()
-        if clicked == cancel_btn:
-            return "cancel"
-        if clicked == keep_btn:
-            return "keep"
-        return "overwrite"
+        dialog = NameConflictDialog(name, "Token", self)
+        result = dialog.exec()
+        if result == QDialog.DialogCode.Accepted:
+            return dialog.choice
+        return "cancel"
 
     def _track_unsaved_changes(self):
         if not self._current_token:

@@ -131,3 +131,65 @@ class TitleBar(QFrame):
     def mouseDoubleClickEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
             self.maximize_clicked.emit()
+
+
+class DialogTitleBar(QFrame):
+    """Simplified frameless title bar for dialogs (no theme toggle, no maximize)."""
+
+    close_clicked = pyqtSignal()
+
+    def __init__(self, title: str = "", parent=None):
+        super().__init__(parent)
+        self.setObjectName("dialogTitleBar")
+        self.setFixedHeight(40)
+        self._drag_pos = None
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 0, 12, 0)
+        layout.setSpacing(0)
+
+        # Window control button (just close for dialogs)
+        btn_container = QWidget()
+        btn_layout = QHBoxLayout(btn_container)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(8)
+
+        self.close_btn = WindowButton("close")
+        self.close_btn.setObjectName("closeButton")
+        self.close_btn.clicked.connect(self.close_clicked.emit)
+        self.close_btn.setToolTip("Close")
+
+        btn_layout.addWidget(self.close_btn)
+        layout.addWidget(btn_container)
+
+        # Title in center
+        layout.addStretch()
+        self.title_label = QLabel(title)
+        self.title_label.setObjectName("dialogTitleLabel")
+        layout.addWidget(self.title_label)
+        layout.addStretch()
+
+        # Empty space on right to balance layout
+        spacer = QWidget()
+        spacer.setFixedWidth(28)  # Same width as btn_container (12 + 8 spacing + 8)
+        layout.addWidget(spacer)
+
+    def set_title(self, title: str):
+        """Update the dialog title."""
+        self.title_label.setText(title)
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = (
+                event.globalPosition().toPoint()
+                - self.window().frameGeometry().topLeft()
+            )
+            event.accept()
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if event.buttons() & Qt.MouseButton.LeftButton and self._drag_pos:
+            self.window().move(event.globalPosition().toPoint() - self._drag_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        self._drag_pos = None

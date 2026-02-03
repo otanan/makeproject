@@ -14,8 +14,18 @@ QWidget#centralWidget {
     background-color: rgba(30, 30, 46, 1);
 }
 
+QWidget#dialogContainer {
+    background-color: rgba(30, 30, 46, 1);
+    border: 1px solid #45475A;
+}
+
 /* === Title Bar === */
 QFrame#titleBar {
+    background-color: rgba(30, 30, 46, 1);
+    border-bottom-color: #45475A;
+}
+
+QFrame#dialogTitleBar {
     background-color: rgba(30, 30, 46, 1);
     border-bottom-color: #45475A;
 }

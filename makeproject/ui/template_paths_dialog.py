@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 from .dialog_utils import style_default_dialog_button
 from .editors import CodeEditor
 from .panels import SegmentedControl
+from .title_bar import DialogTitleBar
 from ..highlighter import PythonHighlighter
 from .. import library
 
@@ -54,7 +55,8 @@ class TemplatePathsDialog(QDialog):
         parent=None,
     ):
         super().__init__(parent)
-        self.setWindowTitle("MakeProject Settings")
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setModal(True)
         self.setMinimumSize(760, 420)
 
@@ -286,10 +288,33 @@ def f(x):
         if ok_button:
             style_default_dialog_button(ok_button)
 
+        # Container widget that will receive QDialog styling
+        container = QWidget()
+        container.setObjectName("dialogContainer")
+
+        # Create custom title bar
+        title_bar = DialogTitleBar("Settings", container)
+        title_bar.close_clicked.connect(self.reject)
+
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+        container_layout.addWidget(title_bar)
+
+        # Content area with margins
+        content = QVBoxLayout()
+        content.setContentsMargins(20, 16, 20, 16)
+        content.setSpacing(12)
+        content.addWidget(tabs)
+        content.addWidget(stacked, 1)
+        content.addWidget(buttons)
+
+        container_layout.addLayout(content)
+
+        # Dialog layout contains only the container
         layout = QVBoxLayout(self)
-        layout.addWidget(tabs)
-        layout.addWidget(stacked, 1)
-        layout.addWidget(buttons)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(container)
 
     def _browse_folder(self, target: QLineEdit):
         start_dir = target.text().strip()

@@ -1,5 +1,5 @@
 """
-Unsaved changes dialog for MakeProject.
+Name conflict dialog for MakeProject.
 """
 
 from enum import Enum
@@ -18,15 +18,23 @@ from .dialog_utils import style_default_dialog_button
 from .title_bar import DialogTitleBar
 
 
-class UnsavedChangesDialog(QDialog):
-    """Prompt the user when there are unsaved changes on quit."""
+class NameConflictDialog(QDialog):
+    """Prompt the user when a name conflict occurs."""
 
     class Choice(str, Enum):
-        SAVE = "save"
-        DISCARD = "discard"
+        OVERWRITE = "overwrite"
+        KEEP = "keep"
         CANCEL = "cancel"
 
-    def __init__(self, parent=None):
+    def __init__(self, name: str, item_type: str = "Template", parent=None):
+        """
+        Create a name conflict dialog.
+
+        Args:
+            name: The conflicting name
+            item_type: Type of item (e.g., "Template", "Token")
+            parent: Parent widget
+        """
         super().__init__(parent)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -39,31 +47,34 @@ class UnsavedChangesDialog(QDialog):
         container.setObjectName("dialogContainer")
 
         # Create custom title bar
-        title_bar = DialogTitleBar("Unsaved Changes", container)
+        title_bar = DialogTitleBar(f"{item_type} Exists", container)
         title_bar.close_clicked.connect(self.reject)
 
-        title = QLabel("You have unsaved changes.")
+        title = QLabel(f'"{name}" already exists.')
         title.setWordWrap(True)
 
-        subtitle = QLabel("Do you want to save your changes before quitting?")
+        subtitle = QLabel(f"Choose what to do with this {item_type.lower()}.")
         subtitle.setWordWrap(True)
         subtitle.setProperty("class", "muted")
 
-        self.save_button = QPushButton("Save All")
-        self.discard_button = QPushButton("Quit Without Saving")
+        self.overwrite_button = QPushButton("Overwrite")
+        self.keep_button = QPushButton("Keep Both")
         self.cancel_button = QPushButton("Cancel")
 
-        self.discard_button.setProperty("class", "dangerButton")
-        style_default_dialog_button(self.cancel_button)
+        self.overwrite_button.setProperty("class", "dangerButton")
+        style_default_dialog_button(self.keep_button)
+        self.keep_button.setDefault(True)
+        self.keep_button.setAutoDefault(True)
+        self.cancel_button.setProperty("class", "cancelButton")
 
-        self.save_button.clicked.connect(self._on_save)
-        self.discard_button.clicked.connect(self._on_discard)
+        self.overwrite_button.clicked.connect(self._on_overwrite)
+        self.keep_button.clicked.connect(self._on_keep)
         self.cancel_button.clicked.connect(self.reject)
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
-        button_row.addWidget(self.save_button)
-        button_row.addWidget(self.discard_button)
+        button_row.addWidget(self.overwrite_button)
+        button_row.addWidget(self.keep_button)
         button_row.addWidget(self.cancel_button)
 
         container_layout = QVBoxLayout(container)
@@ -85,14 +96,15 @@ class UnsavedChangesDialog(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(container)
 
-    def _on_save(self):
-        self._choice = self.Choice.SAVE
+    def _on_overwrite(self):
+        self._choice = self.Choice.OVERWRITE
         self.accept()
 
-    def _on_discard(self):
-        self._choice = self.Choice.DISCARD
+    def _on_keep(self):
+        self._choice = self.Choice.KEEP
         self.accept()
 
     @property
-    def choice(self) -> "UnsavedChangesDialog.Choice":
-        return self._choice
+    def choice(self) -> str:
+        """Get the user's choice as a string."""
+        return self._choice.value

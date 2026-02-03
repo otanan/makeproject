@@ -3,10 +3,21 @@ QWidget#centralWidget {
     border-radius: 12px;
 }
 
+QWidget#dialogContainer {
+    border-radius: 8px;
+}
+
 /* === Title Bar === */
 QFrame#titleBar {
     border-top-left-radius: 12px;
     border-top-right-radius: 12px;
+    border-bottom-width: 1px;
+    border-bottom-style: solid;
+}
+
+QFrame#dialogTitleBar {
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
     border-bottom-width: 1px;
     border-bottom-style: solid;
 }
