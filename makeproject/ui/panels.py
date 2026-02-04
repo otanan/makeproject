@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath
 from ..constants import Timing, Defaults, Dimensions
 
 from PyQt6.QtCore import (
-    Qt, QSize, QPoint, pyqtSignal, QTimer, QPropertyAnimation,
+    Qt, QSize, QPoint, QRect, pyqtSignal, QTimer, QPropertyAnimation,
     QEasingCurve, QUrl
 )
 from PyQt6.QtGui import (
@@ -3012,6 +3012,7 @@ class FileTemplatesPanel(QFrame):
             self.template_list.setCurrentItem(item)
             menu = QMenu(self)
             new_template_action = menu.addAction("New Template")
+            generate_folder_action = menu.addAction("Generate this folder")
             menu.addSeparator()
             rename_action = menu.addAction("Rename")
             show_action = menu.addAction("Show in Finder")
@@ -3020,6 +3021,8 @@ class FileTemplatesPanel(QFrame):
             action = menu.exec(self.template_list.viewport().mapToGlobal(pos))
             if action == new_template_action:
                 self._create_new_template(folder=item_path)
+            elif action == generate_folder_action:
+                self._generate_folder(item_path)
             elif action == rename_action:
                 self._start_rename_folder(item_path)
             elif action == show_action:
@@ -3124,6 +3127,110 @@ class FileTemplatesPanel(QFrame):
     def _generate_file_from_template(self, name: str, content: str):
         """Request file generation from this template."""
         self.generate_file_requested.emit(name, content)
+
+    def _generate_folder(self, folder_name: str):
+        """Generate all files in a folder."""
+        from makeproject.template_engine import build_token_context, substitute_tokens
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
+
+        # Get all templates in this folder
+        template_names = library.get_file_templates_in_folder(folder_name)
+        if not template_names:
+            QMessageBox.information(self, "Empty Folder", f"The folder '{folder_name}' contains no templates.")
+            return
+
+        # Ask user to select output directory
+        output_dir = QFileDialog.getExistingDirectory(
+            self,
+            f"Select Output Directory for '{folder_name}' Templates",
+            str(library.get_project_generation_dir())
+        )
+        if not output_dir:
+            return
+
+        output_path = Path(output_dir)
+
+        # Build token context (same as _generate_file_from_template in window.py)
+        # We need to get the project details from the parent window
+        # For now, emit the signal for each file - the window will handle it
+        # But we want to generate all files to the same directory
+
+        # Actually, let's directly generate files here to avoid multiple prompts
+        parent_window = None
+        widget = self.parentWidget()
+        while widget:
+            if hasattr(widget, 'details_panel'):
+                parent_window = widget
+                break
+            widget = widget.parentWidget()
+
+        if not parent_window:
+            QMessageBox.warning(self, "Error", "Could not find project details.")
+            return
+
+        # Build token context
+        context = build_token_context(
+            None,
+            parent_window.details_panel.get_title(),
+            "",
+            parent_window.details_panel.get_custom_field_values(apply_defaults=True),
+            resolve_extra_tokens=True,
+        )
+
+        # Generate each file
+        generated_count = 0
+        errors = []
+
+        for template_name in template_names:
+            try:
+                # Get template content
+                content = library.get_file_template(template_name)
+                if content is None:
+                    errors.append(f"{template_name}: Template not found")
+                    continue
+
+                # Extract filename from template path (e.g., "foo/bar1" -> "bar1")
+                filename = Path(template_name).name
+
+                # Add filename token
+                file_context = context.copy()
+                file_context['filename'] = filename
+                file_context['filename'.lower()] = filename
+
+                # Substitute tokens
+                try:
+                    generated_content = substitute_tokens(content, file_context)
+                except Exception as e:
+                    errors.append(f"{filename}: {e}")
+                    continue
+
+                # Write file
+                output_file = output_path / filename
+                try:
+                    output_file.write_text(generated_content, encoding='utf-8')
+                    generated_count += 1
+                except Exception as e:
+                    errors.append(f"{filename}: Failed to write file - {e}")
+
+            except Exception as e:
+                errors.append(f"{template_name}: {e}")
+
+        # Show result
+        if errors:
+            error_msg = "\n".join(errors[:10])  # Show first 10 errors
+            if len(errors) > 10:
+                error_msg += f"\n... and {len(errors) - 10} more errors"
+            QMessageBox.warning(
+                self,
+                "Generation Completed with Errors",
+                f"Generated {generated_count} file(s) to {output_path}\n\nErrors:\n{error_msg}"
+            )
+        else:
+            QMessageBox.information(
+                self,
+                "Generation Complete",
+                f"Successfully generated {generated_count} file(s) to {output_path}"
+            )
 
     def _show_in_finder(self, name: str):
         path = None
