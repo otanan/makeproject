@@ -38,5 +38,6 @@ _archive
 
 #------------- Project-specific settings -------------#
 MakeProject.zip
+Makefile
 # Remove build.sh and build.md files
 build*
