@@ -1,12 +1,42 @@
-.DS_Store
-__pycache__
-.pyinstaller
-.tmp
-.venv
+#------------- Universal settings -------------#
+
+#--- macOS ---#
+.DS_STORE
+
+#--- General & Build Related ---#
+# LaTeX, Sphinx, Pyinstaller, ...
 build
 dist
 icon.iconset
 icon.png
 
-# Built .app file
+#--- LaTeX ---#
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.pdfsync
+*.run.xml
+*.synctex.gz
+
+#--- Python ---#
+__pycache__
+.pyinstaller
+.tmp
+.venv
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+# Egg-info for pip
+*.egg-info
+
+#--- Custom ---#
+_archive
+
+#------------- Project-specific settings -------------#
 MakeProject.zip
+# Remove build.sh and build.md files
+build*
