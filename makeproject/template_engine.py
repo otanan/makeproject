@@ -271,13 +271,13 @@ def parse_yaml(text: str) -> Tuple[Optional[Dict], Optional[str]]:
 
 def collect_template_references(text: str) -> List[TemplateReference]:
     if not re.search(
-        r'(?m)^\s*-?\s*(project_template|file_template|template)\s*:',
+        r'(?m)^\s*-?\s*(project_template|file_template|folder_template|template)\s*:',
         text,
     ):
         return []
     refs: List[TemplateReference] = []
     pattern = re.compile(
-        r'^\s*-?\s*(project_template|file_template|template)\s*:\s*(.*?)\s*(?:#.*)?$'
+        r'^\s*-?\s*(project_template|file_template|folder_template|template)\s*:\s*(.*?)\s*(?:#.*)?$'
     )
     for index, line in enumerate(text.splitlines(), start=1):
         match = pattern.match(line)
@@ -829,6 +829,46 @@ def _process_file_item(
             is_folder=False,
             source_template=source_template,
         )]
+
+    if 'folder_template' in item:
+        folder_value = _normalize_token_value(item['folder_template'])
+        folder_name = substitute_tokens(folder_value, context).strip()
+        if not folder_name:
+            return []
+
+        # Get all file templates in this folder
+        template_names = library.get_file_templates_in_folder(folder_name)
+        if not template_names:
+            return []
+
+        # Create a FileNode for each template in the folder
+        nodes = []
+        for template_name in template_names:
+            # Extract the base filename (remove folder prefix)
+            # e.g., "foo/bar1" -> "bar1"
+            base_filename = template_name.split('/', 1)[-1] if '/' in template_name else template_name
+            filename = sanitize_filename(base_filename)
+            file_context = _with_file_context(context, filename)
+
+            template_content = get_file_template_content(template_name)
+            try:
+                content = substitute_tokens(template_content, file_context)
+            except Exception as exc:
+                raise _decorate_template_error(
+                    exc,
+                    template_name,
+                    template_content,
+                    "file template",
+                ) from exc
+
+            nodes.append(FileNode(
+                name=filename,
+                content=content,
+                is_folder=False,
+                source_template=source_template,
+            ))
+
+        return nodes
 
     if 'file' in item:
         # It's a file

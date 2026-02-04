@@ -122,7 +122,7 @@ class YAMLHighlighter(QSyntaxHighlighter):
         # file/folder/contents/template keys (special highlighting)
         self.rules.append((
             re.compile(
-                r'^\s*-?\s*(file|folder|contents|content|template|file_template|project_template|title|description)\s*:'
+                r'^\s*-?\s*(file|folder|contents|content|template|file_template|folder_template|project_template|title|description)\s*:'
             ),
             'file_folder_key'
         ))
@@ -279,7 +279,7 @@ class YAMLHighlighter(QSyntaxHighlighter):
         comment_start = self._comment_start(text)
         handled_special_case = False
         # Special handling for file: and folder: values (file/folder names)
-        file_folder_match = re.match(r'^(\s*-?\s*)(file|folder|file_template)(\s*:\s*)(.+)$', text)
+        file_folder_match = re.match(r'^(\s*-?\s*)(file|folder|file_template|folder_template)(\s*:\s*)(.+)$', text)
         if file_folder_match:
             prefix_len = len(file_folder_match.group(1))
             key_start = prefix_len
@@ -324,7 +324,7 @@ class YAMLHighlighter(QSyntaxHighlighter):
                     key_value = key_value[1:-1]
                 if key_value.lower() not in (
                     'file', 'folder', 'contents', 'content', 'template', 'file_template',
-                    'project_template', 'title', 'description'
+                    'folder_template', 'project_template', 'title', 'description'
                 ):
                     self.setFormat(prefix_len, key_len, self.formats['file_folder_name'])
                     for match in re.finditer(r'\{mp:[^}]+\}', key_text, re.IGNORECASE):
@@ -363,7 +363,7 @@ class YAMLHighlighter(QSyntaxHighlighter):
                         key = match.group(1) if match.lastindex else match.group(0)
                         if key.lower() not in (
                             'file', 'folder', 'contents', 'content', 'template', 'file_template',
-                            'project_template', 'title', 'description'
+                            'folder_template', 'project_template', 'title', 'description'
                         ):
                             key_start = match.start(1) if match.lastindex else match.start()
                             key_len = len(key)
@@ -373,7 +373,7 @@ class YAMLHighlighter(QSyntaxHighlighter):
                     for match in pattern.finditer(text):
                         # Find the keyword position
                         keyword_match = re.search(
-                            r'(file|folder|contents|content|template|file_template|project_template|title|description)',
+                            r'(file|folder|contents|content|template|file_template|folder_template|project_template|title|description)',
                             match.group(),
                             re.IGNORECASE
                         )
