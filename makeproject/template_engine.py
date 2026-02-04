@@ -17,14 +17,27 @@ import yaml
 from . import library
 
 
+# Binary file extensions that should be copied without token substitution
+BINARY_EXTENSIONS = {
+    '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.svg',  # Images
+    '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',  # Documents
+    '.zip', '.tar', '.gz', '.bz2', '.7z', '.rar',  # Archives
+    '.mp3', '.mp4', '.avi', '.mov', '.wav', '.flac',  # Media
+    '.exe', '.dll', '.so', '.dylib',  # Binaries
+    '.ttf', '.otf', '.woff', '.woff2',  # Fonts
+    '.db', '.sqlite', '.sqlite3',  # Databases
+}
+
+
 @dataclass
 class FileNode:
     """Represents a file in the project tree."""
     name: str
-    content: str = ""
+    content: str | bytes = ""
     is_folder: bool = False
     children: List['FileNode'] = field(default_factory=list)
     source_template: str | None = None
+    is_binary: bool = False
     
     def file_count(self) -> int:
         """Count total files (not folders) in this subtree."""
@@ -815,21 +828,37 @@ def _process_file_item(
         base_filename = Path(template_name).name
         filename = sanitize_filename(base_filename)
         file_context = _with_file_context(context, filename)
-        template_content = get_file_template_content(template_name)
-        try:
-            content = substitute_tokens(template_content, file_context)
-        except Exception as exc:
-            raise _decorate_template_error(
-                exc,
-                template_name,
-                template_content,
-                "file template",
-            ) from exc
+
+        # Check if this is a binary file (by extension)
+        file_extension = Path(template_name).suffix.lower()
+        is_binary = file_extension in BINARY_EXTENSIONS
+
+        if is_binary:
+            # For binary files, read as bytes and copy directly without token substitution
+            template_path = library.get_file_template_path(template_name)
+            if template_path and template_path.exists():
+                content = template_path.read_bytes()
+            else:
+                content = b""
+        else:
+            # For text files, do normal token substitution
+            template_content = get_file_template_content(template_name)
+            try:
+                content = substitute_tokens(template_content, file_context)
+            except Exception as exc:
+                raise _decorate_template_error(
+                    exc,
+                    template_name,
+                    template_content,
+                    "file template",
+                ) from exc
+
         return [FileNode(
             name=filename,
             content=content,
             is_folder=False,
             source_template=source_template,
+            is_binary=is_binary,
         )]
 
     if 'folder_template' in item:
@@ -852,22 +881,37 @@ def _process_file_item(
             filename = sanitize_filename(base_filename)
             file_context = _with_file_context(context, filename)
 
-            template_content = get_file_template_content(template_name)
-            try:
-                content = substitute_tokens(template_content, file_context)
-            except Exception as exc:
-                raise _decorate_template_error(
-                    exc,
-                    template_name,
-                    template_content,
-                    "file template",
-                ) from exc
+            # Check if this is a binary file
+            from pathlib import Path
+            file_extension = Path(template_name).suffix.lower()
+            is_binary = file_extension in BINARY_EXTENSIONS
+
+            if is_binary:
+                # For binary files, read as bytes and copy directly
+                template_path = library.get_file_template_path(template_name)
+                if template_path and template_path.exists():
+                    content = template_path.read_bytes()
+                else:
+                    content = b""
+            else:
+                # For text files, do normal token substitution
+                template_content = get_file_template_content(template_name)
+                try:
+                    content = substitute_tokens(template_content, file_context)
+                except Exception as exc:
+                    raise _decorate_template_error(
+                        exc,
+                        template_name,
+                        template_content,
+                        "file template",
+                    ) from exc
 
             nodes.append(FileNode(
                 name=filename,
                 content=content,
                 is_folder=False,
                 source_template=source_template,
+                is_binary=is_binary,
             ))
 
         return nodes
@@ -924,22 +968,37 @@ def _process_file_item(
                 filename = sanitize_filename(base_filename)
                 file_context = _with_file_context(context, filename)
 
-                template_content = get_file_template_content(template_name)
-                try:
-                    content = substitute_tokens(template_content, file_context)
-                except Exception as exc:
-                    raise _decorate_template_error(
-                        exc,
-                        template_name,
-                        template_content,
-                        "file template",
-                    ) from exc
+                # Check if this is a binary file
+                from pathlib import Path
+                file_extension = Path(template_name).suffix.lower()
+                is_binary = file_extension in BINARY_EXTENSIONS
+
+                if is_binary:
+                    # For binary files, read as bytes and copy directly
+                    template_path = library.get_file_template_path(template_name)
+                    if template_path and template_path.exists():
+                        content = template_path.read_bytes()
+                    else:
+                        content = b""
+                else:
+                    # For text files, do normal token substitution
+                    template_content = get_file_template_content(template_name)
+                    try:
+                        content = substitute_tokens(template_content, file_context)
+                    except Exception as exc:
+                        raise _decorate_template_error(
+                            exc,
+                            template_name,
+                            template_content,
+                            "file template",
+                        ) from exc
 
                 folder.children.append(FileNode(
                     name=filename,
                     content=content,
                     is_folder=False,
                     source_template=source_template,
+                    is_binary=is_binary,
                 ))
 
         # Process contents
@@ -1050,7 +1109,11 @@ def generate_project(
                         return
                 # Ensure parent exists
                 target_path.parent.mkdir(parents=True, exist_ok=True)
-                target_path.write_text(node.content, encoding='utf-8')
+                # Write binary or text content appropriately
+                if node.is_binary or isinstance(node.content, bytes):
+                    target_path.write_bytes(node.content)
+                else:
+                    target_path.write_text(node.content, encoding='utf-8')
                 files_created[0] += 1
                 
                 if progress_callback:

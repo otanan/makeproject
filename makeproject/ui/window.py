@@ -227,6 +227,13 @@ class MakeProjectWindow(QMainWindow):
         decrease_font_action.triggered.connect(self._decrease_font_size)
         self.addAction(decrease_font_action)
 
+        # Generate project shortcut (Cmd+Enter on macOS, Ctrl+Enter elsewhere)
+        generate_action = QAction("Generate Project", self)
+        generate_action.setShortcut(QKeySequence("Ctrl+Return"))
+        generate_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        generate_action.triggered.connect(self._generate_project)
+        self.addAction(generate_action)
+
     def _setup_ui(self):
         """Set up the main UI layout."""
         central = QWidget()
