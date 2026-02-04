@@ -807,12 +807,14 @@ def _process_file_item(
     
     if 'file_template' in item:
         filename_value = _normalize_token_value(item['file_template'])
-        filename = substitute_tokens(filename_value, context)
-        filename = sanitize_filename(filename)
-        file_context = _with_file_context(context, filename)
         template_name = substitute_tokens(filename_value, context).strip()
         if not template_name:
             return []
+        # Extract just the base filename (e.g., "foo/bar" -> "bar")
+        from pathlib import Path
+        base_filename = Path(template_name).name
+        filename = sanitize_filename(base_filename)
+        file_context = _with_file_context(context, filename)
         template_content = get_file_template_content(template_name)
         try:
             content = substitute_tokens(template_content, file_context)
@@ -904,13 +906,42 @@ def _process_file_item(
         # It's a folder
         foldername = substitute_tokens(_normalize_token_value(item['folder']), context)
         foldername = sanitize_filename(foldername)
-        
+
         folder = FileNode(
             name=foldername,
             is_folder=True,
             source_template=source_template,
         )
-        
+
+        # Check if folder has a template property to populate it with file templates
+        if 'template' in item:
+            folder_template = item['template']
+            template_names = library.get_file_templates_in_folder(folder_template)
+
+            for template_name in template_names:
+                # Extract the base filename (remove folder prefix)
+                base_filename = template_name.split('/', 1)[-1] if '/' in template_name else template_name
+                filename = sanitize_filename(base_filename)
+                file_context = _with_file_context(context, filename)
+
+                template_content = get_file_template_content(template_name)
+                try:
+                    content = substitute_tokens(template_content, file_context)
+                except Exception as exc:
+                    raise _decorate_template_error(
+                        exc,
+                        template_name,
+                        template_content,
+                        "file template",
+                    ) from exc
+
+                folder.children.append(FileNode(
+                    name=filename,
+                    content=content,
+                    is_folder=False,
+                    source_template=source_template,
+                ))
+
         # Process contents
         contents = item.get('contents', [])
         if isinstance(contents, list):

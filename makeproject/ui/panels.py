@@ -434,7 +434,7 @@ class ProjectTemplatesPanel(QFrame):
             widget.name_canceled.connect(lambda old: self._on_rename_canceled(name))
             widget.name_edit.setText(display_name)
             if indent:
-                widget.setContentsMargins(20, 0, 0, 0)
+                widget.setContentsMargins(Dimensions.LIST_ITEM_INDENT, 0, 0, 0)
             item.setData(ROLE_ITEM_TYPE, "template")
             item.setData(ROLE_ITEM_PATH, name)
             item.setSizeHint(widget.sizeHint())
@@ -458,7 +458,7 @@ class ProjectTemplatesPanel(QFrame):
                 layout = widget.layout()
                 if layout:
                     margins = layout.contentsMargins()
-                    layout.setContentsMargins(20, margins.top(), margins.right(), margins.bottom())
+                    layout.setContentsMargins(Dimensions.LIST_ITEM_INDENT, margins.top(), margins.right(), margins.bottom())
             item.setData(ROLE_ITEM_TYPE, "template")
             item.setData(ROLE_ITEM_PATH, name)
             item.setSizeHint(widget.sizeHint())
@@ -2434,7 +2434,7 @@ class FileTemplatesPanel(QFrame):
                 layout = widget.layout()
                 if layout:
                     margins = layout.contentsMargins()
-                    layout.setContentsMargins(20, margins.top(), margins.right(), margins.bottom())
+                    layout.setContentsMargins(Dimensions.LIST_ITEM_INDENT, margins.top(), margins.right(), margins.bottom())
             item.setData(ROLE_ITEM_TYPE, "template")
             item.setData(ROLE_ITEM_PATH, name)
             item.setSizeHint(widget.sizeHint())
@@ -2456,7 +2456,7 @@ class FileTemplatesPanel(QFrame):
                 layout = widget.layout()
                 if layout:
                     margins = layout.contentsMargins()
-                    layout.setContentsMargins(20, margins.top(), margins.right(), margins.bottom())
+                    layout.setContentsMargins(Dimensions.LIST_ITEM_INDENT, margins.top(), margins.right(), margins.bottom())
             item.setData(ROLE_ITEM_TYPE, "template")
             item.setData(ROLE_ITEM_PATH, name)
             item.setSizeHint(widget.sizeHint())

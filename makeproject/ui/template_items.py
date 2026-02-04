@@ -4,6 +4,7 @@ Reusable list item widgets for template panels.
 
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QFontMetrics, QIcon, QPainter, QPixmap, QPainterPath, QColor
+from ..constants import Dimensions
 from PyQt6.QtWidgets import (
     QWidget,
     QHBoxLayout,
@@ -118,7 +119,7 @@ class TemplateListItem(QWidget):
 
         layout = QHBoxLayout(self)
         # Controls the indentation of all items
-        layout.setContentsMargins(10, 0, 0, 0)
+        layout.setContentsMargins(Dimensions.LIST_ITEM_BASE_INDENT, 0, 0, 0)
         layout.setSpacing(4)
 
         # Unsaved indicator dot
@@ -252,7 +253,7 @@ class AddTemplateButton(QWidget):
         super().__init__(parent)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 0, 0, 0)
+        layout.setContentsMargins(Dimensions.LIST_ITEM_BASE_INDENT, 0, 0, 0)
         layout.setSpacing(4)
 
         self.add_btn = QPushButton("+")
@@ -314,8 +315,8 @@ class FolderListItem(QWidget):
         self._dark_mode = True
 
         layout = QHBoxLayout(self)
-        # Same indentation as TemplateListItem (10px)
-        layout.setContentsMargins(10, 0, 0, 0)
+        # Same indentation as TemplateListItem
+        layout.setContentsMargins(Dimensions.LIST_ITEM_BASE_INDENT, 0, 0, 0)
         layout.setSpacing(4)
 
         # Disclosure triangle

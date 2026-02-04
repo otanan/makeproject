@@ -1504,12 +1504,16 @@ class MakeProjectWindow(QMainWindow):
                     template_name = raw_value.strip()
                 if not template_name:
                     continue
+                # Check if it exists as a file template
                 if template_name not in file_templates:
-                    message = self._ensure_line_in_message(
-                        f'Missing file template "{template_name}"',
-                        ref.line,
-                    )
-                    warnings.append((message, ref.line))
+                    # If not, check if it's a folder template (for folder: + template: syntax)
+                    file_template_folders = library.list_file_template_folders()
+                    if template_name not in file_template_folders:
+                        message = self._ensure_line_in_message(
+                            f'Missing file template or folder "{template_name}"',
+                            ref.line,
+                        )
+                        warnings.append((message, ref.line))
         return warnings
 
     def _get_yaml_hash(self, text: str) -> str:

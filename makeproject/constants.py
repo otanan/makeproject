@@ -112,7 +112,8 @@ class Dimensions:
 
     # List items
     LIST_ITEM_HEIGHT = 28
-    LIST_ITEM_INDENT = 20
+    LIST_ITEM_BASE_INDENT = 10      # Base left margin for all items
+    LIST_ITEM_INDENT = 25           # Left margin for nested items (templates in folders)
 
     # Margins and spacing
     PANEL_MARGIN = 12
