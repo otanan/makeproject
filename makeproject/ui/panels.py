@@ -237,12 +237,19 @@ class ProjectTemplatesPanel(QFrame):
             return path.parts[0]
         return None
 
-    def refresh_list(self):
-        """Refresh the template list from disk with folder support (debounced)."""
-        # Cancel any pending refresh and schedule a new one
-        if self._refresh_timer.isActive():
-            self._refresh_timer.stop()
-        self._refresh_timer.start()
+    def refresh_list(self, immediate: bool = False):
+        """Refresh the template list from disk with folder support (debounced).
+
+        Args:
+            immediate: If True, refresh immediately without debouncing.
+        """
+        if immediate:
+            self._execute_refresh()
+        else:
+            # Cancel any pending refresh and schedule a new one
+            if self._refresh_timer.isActive():
+                self._refresh_timer.stop()
+            self._refresh_timer.start()
 
     def _execute_refresh(self):
         """Execute the actual refresh logic (called after debounce)."""
@@ -478,7 +485,8 @@ class ProjectTemplatesPanel(QFrame):
     def _on_folder_toggled(self, folder: str, expanded: bool):
         """Handle folder expand/collapse."""
         self._folder_expanded[folder] = expanded
-        self.refresh_list()
+        self._save_folder_states()
+        self.refresh_list(immediate=True)
         self._select_item_by_path(folder)
 
     def _select_item_by_path(self, path: str):
@@ -488,6 +496,21 @@ class ProjectTemplatesPanel(QFrame):
             if item and item.data(ROLE_ITEM_PATH) == path:
                 self.template_list.setCurrentItem(item)
                 return
+
+    def _save_folder_states(self):
+        """Save folder expanded states to preferences."""
+        library.set_preference("project_template_folders_expanded", dict(self._folder_expanded))
+
+    def _restore_folder_states(self):
+        """Restore folder expanded states from preferences."""
+        saved_states = library.get_preference("project_template_folders_expanded", {})
+        if not isinstance(saved_states, dict):
+            return
+        # Only restore states for folders that currently exist
+        folders = library.list_project_template_folders()
+        for folder in folders:
+            if folder in saved_states:
+                self._folder_expanded[folder] = saved_states[folder]
 
     def _start_rename_folder(self, folder: str):
         """Start renaming a folder."""
@@ -502,6 +525,7 @@ class ProjectTemplatesPanel(QFrame):
                 # Update expansion state
                 if old_name in self._folder_expanded:
                     self._folder_expanded[new_name] = self._folder_expanded.pop(old_name)
+                self._save_folder_states()
                 # Update current template path if it was in this folder
                 if self._current_template and self._current_template.startswith(f"{old_name}/"):
                     new_template = new_name + self._current_template[len(old_name):]
@@ -524,7 +548,8 @@ class ProjectTemplatesPanel(QFrame):
         
         library.delete_project_template_folder(folder)
         self._folder_expanded.pop(folder, None)
-        
+        self._save_folder_states()
+
         # Clear current template if it was in the deleted folder
         if self._current_template and self._current_template.startswith(f"{folder}/"):
             self._current_template = None
@@ -1103,8 +1128,16 @@ class ProjectTemplatesPanel(QFrame):
         item_type = item.data(ROLE_ITEM_TYPE)
         item_path = item.data(ROLE_ITEM_PATH)
         widget = self.template_list.itemWidget(item)
-        
-        if item_type == "template" and isinstance(widget, TemplateListItem):
+
+        if item_type == "folder" and isinstance(widget, FolderListItem) and not widget._editable:
+            if item_path:
+                self._pending_click_name = item_path
+                if self._click_timer.receivers(self._click_timer.timeout) > 0:
+                    self._click_timer.timeout.disconnect()
+                self._click_timer.timeout.connect(self._process_single_click_folder)
+                self._click_timer.setInterval(Timing.FOLDER_CLICK_DEBOUNCE_MS)
+                self._click_timer.start()
+        elif item_type == "template" and isinstance(widget, TemplateListItem):
             if item_path and item_path != "untitled project" and not widget._editable:
                 if self._editing_new:
                     return
@@ -1114,6 +1147,7 @@ class ProjectTemplatesPanel(QFrame):
                 if self._click_timer.receivers(self._click_timer.timeout) > 0:
                     self._click_timer.timeout.disconnect()
                 self._click_timer.timeout.connect(self._process_single_click)
+                self._click_timer.setInterval(Timing.CLICK_DEBOUNCE_MS)
                 self._click_timer.start()
 
     def _process_single_click(self):
@@ -1124,6 +1158,13 @@ class ProjectTemplatesPanel(QFrame):
             self.template_selected.emit(self._pending_click_name)
         self._pending_click_name = None
 
+    def _process_single_click_folder(self):
+        if self._pending_click_name:
+            folder = self._pending_click_name
+            expanded = self._folder_expanded.get(folder, True)
+            self._on_folder_toggled(folder, not expanded)
+        self._pending_click_name = None
+
     def _on_item_double_clicked(self, item: QListWidgetItem):
         self._click_timer.stop()
         self._pending_click_name = None
@@ -1131,7 +1172,7 @@ class ProjectTemplatesPanel(QFrame):
         item_type = item.data(ROLE_ITEM_TYPE)
         item_path = item.data(ROLE_ITEM_PATH)
         widget = self.template_list.itemWidget(item)
-        
+
         if item_type == "folder" and isinstance(widget, FolderListItem) and not widget._editable:
             if item_path:
                 self._start_rename_folder(item_path)
@@ -2256,12 +2297,19 @@ class FileTemplatesPanel(QFrame):
             return path.parts[0]
         return None
 
-    def refresh_list(self):
-        """Refresh the template list from disk with folder support (debounced)."""
-        # Cancel any pending refresh and schedule a new one
-        if self._refresh_timer.isActive():
-            self._refresh_timer.stop()
-        self._refresh_timer.start()
+    def refresh_list(self, immediate: bool = False):
+        """Refresh the template list from disk with folder support (debounced).
+
+        Args:
+            immediate: If True, refresh immediately without debouncing.
+        """
+        if immediate:
+            self._execute_refresh()
+        else:
+            # Cancel any pending refresh and schedule a new one
+            if self._refresh_timer.isActive():
+                self._refresh_timer.stop()
+            self._refresh_timer.start()
 
     def _execute_refresh(self):
         """Execute the actual refresh logic (called after debounce)."""
@@ -2476,7 +2524,8 @@ class FileTemplatesPanel(QFrame):
     def _on_folder_toggled(self, folder: str, expanded: bool):
         """Handle folder expand/collapse."""
         self._folder_expanded[folder] = expanded
-        self.refresh_list()
+        self._save_folder_states()
+        self.refresh_list(immediate=True)
         self._select_item_by_path(folder)
 
     def _select_item_by_path(self, path: str):
@@ -2486,6 +2535,21 @@ class FileTemplatesPanel(QFrame):
             if item and item.data(ROLE_ITEM_PATH) == path:
                 self.template_list.setCurrentItem(item)
                 return
+
+    def _save_folder_states(self):
+        """Save folder expanded states to preferences."""
+        library.set_preference("file_template_folders_expanded", dict(self._folder_expanded))
+
+    def _restore_folder_states(self):
+        """Restore folder expanded states from preferences."""
+        saved_states = library.get_preference("file_template_folders_expanded", {})
+        if not isinstance(saved_states, dict):
+            return
+        # Only restore states for folders that currently exist
+        folders = library.list_file_template_folders()
+        for folder in folders:
+            if folder in saved_states:
+                self._folder_expanded[folder] = saved_states[folder]
 
     def _start_rename_folder(self, folder: str):
         """Start renaming a folder."""
@@ -2500,6 +2564,7 @@ class FileTemplatesPanel(QFrame):
                 # Update expansion state
                 if old_name in self._folder_expanded:
                     self._folder_expanded[new_name] = self._folder_expanded.pop(old_name)
+                self._save_folder_states()
                 # Update current template path if it was in this folder
                 if self._current_template and self._current_template.startswith(f"{old_name}/"):
                     new_template = new_name + self._current_template[len(old_name):]
@@ -2523,7 +2588,8 @@ class FileTemplatesPanel(QFrame):
         
         library.delete_file_template_folder(folder)
         self._folder_expanded.pop(folder, None)
-        
+        self._save_folder_states()
+
         # Clear current template if it was in the deleted folder
         if self._current_template and self._current_template.startswith(f"{folder}/"):
             self._current_template = None
@@ -3254,8 +3320,16 @@ class FileTemplatesPanel(QFrame):
         item_type = item.data(ROLE_ITEM_TYPE)
         item_path = item.data(ROLE_ITEM_PATH)
         widget = self.template_list.itemWidget(item)
-        
-        if item_type == "template" and isinstance(widget, TemplateListItem):
+
+        if item_type == "folder" and isinstance(widget, FolderListItem) and not widget._editable:
+            if item_path:
+                self._pending_click_name = item_path
+                if self._click_timer.receivers(self._click_timer.timeout) > 0:
+                    self._click_timer.timeout.disconnect()
+                self._click_timer.timeout.connect(self._process_single_click_folder)
+                self._click_timer.setInterval(Timing.FOLDER_CLICK_DEBOUNCE_MS)
+                self._click_timer.start()
+        elif item_type == "template" and isinstance(widget, TemplateListItem):
             if item_path and not widget._editable:
                 if item_path == self._current_template:
                     return
@@ -3263,11 +3337,19 @@ class FileTemplatesPanel(QFrame):
                 if self._click_timer.receivers(self._click_timer.timeout) > 0:
                     self._click_timer.timeout.disconnect()
                 self._click_timer.timeout.connect(self._process_single_click)
+                self._click_timer.setInterval(Timing.CLICK_DEBOUNCE_MS)
                 self._click_timer.start()
 
     def _process_single_click(self):
         if self._pending_click_name:
             self._load_template(self._pending_click_name)
+        self._pending_click_name = None
+
+    def _process_single_click_folder(self):
+        if self._pending_click_name:
+            folder = self._pending_click_name
+            expanded = self._folder_expanded.get(folder, True)
+            self._on_folder_toggled(folder, not expanded)
         self._pending_click_name = None
 
     def _on_item_double_clicked(self, item: QListWidgetItem):
@@ -3277,7 +3359,7 @@ class FileTemplatesPanel(QFrame):
         item_type = item.data(ROLE_ITEM_TYPE)
         item_path = item.data(ROLE_ITEM_PATH)
         widget = self.template_list.itemWidget(item)
-        
+
         if item_type == "folder" and isinstance(widget, FolderListItem) and not widget._editable:
             if item_path:
                 self._start_rename_folder(item_path)

@@ -2,9 +2,9 @@
 Reusable list item widgets for template panels.
 """
 
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QFontMetrics, QIcon, QPainter, QPixmap, QPainterPath, QColor
-from ..constants import Dimensions
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPropertyAnimation, QEasingCurve, pyqtProperty, QPointF
+from PyQt6.QtGui import QFontMetrics, QIcon, QPainter, QPixmap, QPainterPath, QColor, QPen, QBrush, QPolygonF
+from ..constants import Dimensions, Timing
 from PyQt6.QtWidgets import (
     QWidget,
     QHBoxLayout,
@@ -287,6 +287,75 @@ class AddTemplateButton(QWidget):
         return QSize(0, self.add_btn.height())
 
 
+class DisclosureTriangle(QWidget):
+    """Animated disclosure triangle that rotates smoothly."""
+
+    clicked = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(16, 16)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._rotation = 0.0  # 0 = right (collapsed), 90 = down (expanded)
+        self._dark_mode = True
+        self._animation = QPropertyAnimation(self, b"rotation")
+        self._animation.setDuration(Timing.FOLDER_EXPAND_ANIMATION_MS)
+        self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    @pyqtProperty(float)
+    def rotation(self):
+        return self._rotation
+
+    @rotation.setter
+    def rotation(self, value):
+        self._rotation = value
+        self.update()
+
+    def set_expanded(self, expanded: bool, animate: bool = True):
+        """Set the expanded state with optional animation."""
+        target_rotation = 90.0 if expanded else 0.0
+        if animate:
+            self._animation.stop()
+            self._animation.setStartValue(self._rotation)
+            self._animation.setEndValue(target_rotation)
+            self._animation.start()
+        else:
+            self._rotation = target_rotation
+            self.update()
+
+    def set_dark_mode(self, dark_mode: bool):
+        self._dark_mode = dark_mode
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Set color based on theme
+        color = QColor("#6C7086" if self._dark_mode else "#9CA3AF")
+
+        # Move to center and rotate
+        center = self.rect().center()
+        painter.translate(center)
+        painter.rotate(self._rotation)
+
+        # Draw triangle pointing right (will rotate to point down)
+        triangle = QPolygonF([
+            QPointF(2, 0),    # tip
+            QPointF(-2, -3),  # top
+            QPointF(-2, 3),   # bottom
+        ])
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(color))
+        painter.drawPolygon(triangle)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        event.accept()
+
+
 class FolderListItem(QWidget):
     """Collapsible folder row for template lists."""
 
@@ -320,12 +389,10 @@ class FolderListItem(QWidget):
         layout.setSpacing(4)
 
         # Disclosure triangle
-        self.disclosure_btn = QPushButton()
-        self.disclosure_btn.setFixedSize(16, 16)
-        self.disclosure_btn.setProperty("class", "disclosureButton")
-        self.disclosure_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.disclosure_btn = DisclosureTriangle()
+        self.disclosure_btn.set_expanded(expanded, animate=False)
+        self.disclosure_btn.set_dark_mode(self._dark_mode)
         self.disclosure_btn.clicked.connect(self._toggle_expanded)
-        self._update_disclosure_icon()
         layout.addWidget(self.disclosure_btn)
 
         # Folder icon
@@ -362,23 +429,12 @@ class FolderListItem(QWidget):
 
     def _update_disclosure_icon(self):
         """Update the disclosure triangle based on expanded state."""
-        # Use simple unicode triangles
-        if self._expanded:
-            self.disclosure_btn.setText("▼")
-        else:
-            self.disclosure_btn.setText("▶")
-        # Update styling based on dark mode
-        # Must override padding and min-width from base QPushButton style
-        color = "#6C7086" if self._dark_mode else "#9CA3AF"
-        self.disclosure_btn.setStyleSheet(
-            f"QPushButton {{ color: {color}; background: transparent; border: none; "
-            f"font-size: 10px; padding: 0px; min-width: 0px; }}"
-        )
+        self.disclosure_btn.set_expanded(self._expanded, animate=True)
 
     def set_dark_mode(self, dark_mode: bool):
         """Update colors for dark/light mode."""
         self._dark_mode = dark_mode
-        self._update_disclosure_icon()
+        self.disclosure_btn.set_dark_mode(dark_mode)
 
     def _toggle_expanded(self):
         self._expanded = not self._expanded
@@ -391,7 +447,7 @@ class FolderListItem(QWidget):
     def set_expanded(self, expanded: bool):
         if self._expanded != expanded:
             self._expanded = expanded
-            self._update_disclosure_icon()
+            self.disclosure_btn.set_expanded(expanded, animate=False)
 
     def mouseDoubleClickEvent(self, event):
         if not self._editable:

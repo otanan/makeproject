@@ -101,6 +101,7 @@ class MakeProjectWindow(QMainWindow):
         self._setup_menu()
         self._setup_ui()
         self._restore_splitter_states()
+        self._restore_window_geometry()
         self._setup_signals()
         self._apply_theme()
         self._reset_yaml_history()
@@ -258,6 +259,7 @@ class MakeProjectWindow(QMainWindow):
         self.project_templates_panel = ProjectTemplatesPanel(
             draft_store=self._project_template_drafts
         )
+        self.project_templates_panel._restore_folder_states()
         self.project_templates_panel.setMinimumWidth(200)
         self.project_templates_panel.setMaximumWidth(300)
         main_splitter.addWidget(self.project_templates_panel)
@@ -304,6 +306,7 @@ class MakeProjectWindow(QMainWindow):
 
         self.bottom_stack = QStackedWidget()
         self.file_templates_panel = FileTemplatesPanel()
+        self.file_templates_panel._restore_folder_states()
         self.bottom_stack.addWidget(self.file_templates_panel)
         self.custom_tokens_panel = CustomTokensPanel()
         self.bottom_stack.addWidget(self.custom_tokens_panel)
@@ -386,6 +389,17 @@ class MakeProjectWindow(QMainWindow):
             prefs.get("splitter_custom_tokens"),
         )
 
+    def _restore_window_geometry(self):
+        prefs = library.load_preferences()
+        geometry_b64 = prefs.get("window_geometry")
+        if not geometry_b64:
+            return
+        try:
+            geometry = base64.b64decode(geometry_b64.encode("ascii"))
+        except (ValueError, UnicodeDecodeError):
+            return
+        self.restoreGeometry(geometry)
+
     def _save_splitter_states(self):
         prefs = library.load_preferences()
         prefs["splitter_main"] = base64.b64encode(
@@ -403,6 +417,11 @@ class MakeProjectWindow(QMainWindow):
         prefs["splitter_custom_tokens"] = base64.b64encode(
             self.custom_tokens_panel.splitter.saveState()
         ).decode("ascii")
+        library.save_preferences(prefs)
+
+    def _save_window_geometry(self):
+        prefs = library.load_preferences()
+        prefs["window_geometry"] = base64.b64encode(self.saveGeometry()).decode("ascii")
         library.save_preferences(prefs)
 
     def _setup_signals(self):
@@ -1170,10 +1189,12 @@ class MakeProjectWindow(QMainWindow):
     def closeEvent(self, event):
         if self._force_quit:
             self._save_splitter_states()
+            self._save_window_geometry()
             event.accept()
             return
         if not self._has_any_unsaved_changes():
             self._save_splitter_states()
+            self._save_window_geometry()
             event.accept()
             return
         dialog = UnsavedChangesDialog(self)
@@ -1183,6 +1204,7 @@ class MakeProjectWindow(QMainWindow):
         if dialog.choice == UnsavedChangesDialog.Choice.SAVE:
             self._save_all_changes()
         self._save_splitter_states()
+        self._save_window_geometry()
         event.accept()
 
     def _show_status(self, message: str, duration=3000):

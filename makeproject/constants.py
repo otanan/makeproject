@@ -135,11 +135,13 @@ class Timing:
     # Animations
     TOGGLE_ANIMATION_MS = 150
     FADE_ANIMATION_MS = 200
+    FOLDER_EXPAND_ANIMATION_MS = 150
 
     # Debouncing
     REFRESH_DEBOUNCE_MS = 100
     PREVIEW_DEBOUNCE_MS = 250
     CLICK_DEBOUNCE_MS = 250
+    FOLDER_CLICK_DEBOUNCE_MS = 50  # Near-instant response for folder clicks
     HISTORY_COMMIT_MS = 400
 
     # Delays
