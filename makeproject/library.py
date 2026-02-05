@@ -7,7 +7,7 @@ import os
 import sys
 import yaml
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 from .constants import FontSizes, FileSystem, Defaults, CacheLimits
 
@@ -784,13 +784,24 @@ def save_file_templates_list(templates: List[Dict]):
     save_file_templates(templates_dict)
 
 
-def get_file_template(name: str) -> Optional[str]:
-    """Get a single file template by name."""
+def get_file_template(name: str) -> Optional[Union[str, bytes]]:
+    """Get a single file template by name.
+
+    Returns:
+        str for text files, bytes for binary files, or None if not found.
+    """
     path = _template_path_from_name(name)
     if not path or not path.exists():
         return None
     try:
+        # Try to read as text first
         return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        # If text decode fails, it's a binary file - read as bytes
+        try:
+            return path.read_bytes()
+        except Exception:
+            return None
     except Exception:
         return None
 

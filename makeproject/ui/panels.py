@@ -2068,7 +2068,61 @@ class PreviewPanel(QFrame):
         
         # Get the file contents and show the preview.
         content = self._file_contents.get(path, "")
-        if content == "":
+
+        # Check if content is bytes (binary file)
+        if isinstance(content, bytes):
+            # Get filename from path
+            from pathlib import Path
+            filename = Path(path).name
+
+            # Show file size for binary files
+            size_kb = len(content) / 1024
+            if size_kb < 1:
+                size_str = f"{len(content)} bytes"
+            elif size_kb < 1024:
+                size_str = f"{size_kb:.1f} KB"
+            else:
+                size_str = f"{size_kb / 1024:.1f} MB"
+
+            # Check if it's an image or PDF and show preview
+            file_ext = Path(path).suffix.lower()
+            if file_ext in {'.png', '.jpg', '.jpeg', '.gif', '.bmp'}:
+                # Try to load and display image
+                from PyQt6.QtGui import QPixmap, QImage
+                import base64
+
+                pixmap = QPixmap()
+                if pixmap.loadFromData(content):
+                    # Convert to base64 for HTML embedding
+                    image_data_base64 = base64.b64encode(content).decode('utf-8')
+
+                    # Determine mime type
+                    mime_types = {
+                        '.png': 'image/png',
+                        '.jpg': 'image/jpeg',
+                        '.jpeg': 'image/jpeg',
+                        '.gif': 'image/gif',
+                        '.bmp': 'image/bmp',
+                    }
+                    mime_type = mime_types.get(file_ext, 'image/png')
+
+                    # Create HTML with embedded image
+                    html = f"""
+                    <div style="text-align: center; padding: 20px;">
+                        <p style="font-weight: bold; margin-bottom: 10px;">{filename}</p>
+                        <p style="color: #888; margin-bottom: 20px;">{size_str}</p>
+                        <img src="data:{mime_type};base64,{image_data_base64}"
+                             style="max-width: 100%; max-height: 600px; object-fit: contain;">
+                    </div>
+                    """
+                    self.content_view.setHtml(html)
+                else:
+                    self.content_view.setPlaceholderText(f"{filename}\n{size_str}")
+            elif file_ext == '.pdf':
+                self.content_view.setPlaceholderText(f"{filename}\n{size_str}\n\n[PDF preview requires external viewer]")
+            else:
+                self.content_view.setPlaceholderText(f"{filename}\n{size_str}")
+        elif content == "":
             # Remove plain text that might appear.
             self.content_view.setPlaceholderText("Empty file.")
         else:
@@ -2619,6 +2673,9 @@ class FileTemplatesPanel(QFrame):
     def _stash_current_template(self):
         """Cache unsaved edits for the current file template."""
         if not self._current_template:
+            return
+        # Don't stash binary files
+        if isinstance(self._original_content, bytes):
             return
         content = self.editor.toPlainText()
         if content != self._original_content:
@@ -3183,7 +3240,25 @@ class FileTemplatesPanel(QFrame):
         self._original_content = content
         self._has_unsaved_changes = False
         self.editor.blockSignals(True)
-        self.editor.setPlainText(content)
+
+        # Check if content is bytes (binary file)
+        if isinstance(content, bytes):
+            size_kb = len(content) / 1024
+            if size_kb < 1:
+                size_str = f"{len(content)} bytes"
+            elif size_kb < 1024:
+                size_str = f"{size_kb:.1f} KB"
+            else:
+                size_str = f"{size_kb / 1024:.1f} MB"
+            info_text = f"{new_name}\n{size_str}\n\nBinary file - cannot be edited as text"
+            self.editor.clear()  # Clear content so placeholder shows
+            self.editor.setPlaceholderText(info_text)
+            self.editor.setReadOnly(True)
+        else:
+            self.editor.setReadOnly(False)
+            self.editor.setPlaceholderText("")  # Clear placeholder for text files
+            self.editor.setPlainText(content)
+
         self.editor.blockSignals(False)
         self._reset_editor_scroll()
         self.reference_label.setText(f"Reference: template: {new_name}")
@@ -3373,17 +3448,46 @@ class FileTemplatesPanel(QFrame):
         self._stash_current_template()
         content = library.get_file_template(name)
         if content is not None:
-            draft = self._drafts.get(name)
-            editor_content = draft if draft is not None else content
-            self._current_template = name
-            self._original_content = content
-            self._has_unsaved_changes = editor_content != content
-            self.editor.blockSignals(True)
-            self.editor.setPlainText(editor_content)
-            self.editor.blockSignals(False)
-            self._reset_editor_scroll()
-            self.reference_label.setText(f"Reference: template: {name}")
-            self.refresh_list()
+            # Check if content is bytes (binary file)
+            if isinstance(content, bytes):
+                # For binary files, show info text and make read-only
+                self._current_template = name
+                self._original_content = content
+                self._has_unsaved_changes = False
+
+                # Show file size
+                size_kb = len(content) / 1024
+                if size_kb < 1:
+                    size_str = f"{len(content)} bytes"
+                elif size_kb < 1024:
+                    size_str = f"{size_kb:.1f} KB"
+                else:
+                    size_str = f"{size_kb / 1024:.1f} MB"
+
+                # Display info text as placeholder (grayed out)
+                info_text = f"{name}\n{size_str}\n\nBinary file - cannot be edited as text"
+                self.editor.blockSignals(True)
+                self.editor.clear()  # Clear content so placeholder shows
+                self.editor.setPlaceholderText(info_text)
+                self.editor.setReadOnly(True)  # Make read-only for binary files
+                self.editor.blockSignals(False)
+                self._reset_editor_scroll()
+                self.reference_label.setText(f"Reference: template: {name}")
+                self.refresh_list()  # Update list to show correct state
+            else:
+                # Text file - load normally
+                draft = self._drafts.get(name)
+                editor_content = draft if draft is not None else content
+                self._current_template = name
+                self._original_content = content
+                self._has_unsaved_changes = editor_content != content
+                self.editor.blockSignals(True)
+                self.editor.setReadOnly(False)  # Ensure editor is editable for text files
+                self.editor.setPlainText(editor_content)
+                self.editor.blockSignals(False)
+                self._reset_editor_scroll()
+                self.reference_label.setText(f"Reference: template: {name}")
+                self.refresh_list()
 
     def _create_new_template(self, folder: str = None):
         self._stash_current_template()
@@ -3496,6 +3600,10 @@ class FileTemplatesPanel(QFrame):
         return "cancel"
 
     def _track_unsaved_changes(self):
+        # Don't track changes for binary files
+        if isinstance(self._original_content, bytes):
+            return
+
         content = self.editor.toPlainText()
         if not content:
             self._reset_editor_scroll()
@@ -3560,7 +3668,12 @@ class FileTemplatesPanel(QFrame):
 
     def mark_unsaved_changes(self, current_content: str):
         """Update unsaved state based on editor content."""
-        has_changes = current_content != self._original_content
+        # Don't mark binary files as changed
+        if isinstance(self._original_content, bytes):
+            has_changes = False
+        else:
+            has_changes = current_content != self._original_content
+
         if has_changes != self._has_unsaved_changes:
             self._has_unsaved_changes = has_changes
             self.refresh_list()
