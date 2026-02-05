@@ -4020,7 +4020,7 @@ result = "-".join(words)
         self._refreshing = False
         if self._refresh_pending:
             self._refresh_pending = False
-            QTimer.singleShot(0, self._execute_refresh)
+            QTimer.singleShot(0, self.refresh_list)
 
     def _clear_mouse_click_flag(self):
         self._mouse_click_in_progress = False
